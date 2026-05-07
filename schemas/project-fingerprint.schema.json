@@ -1,0 +1,65 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Project Fingerprint",
+  "description": "Tech stack and structure profile of an existing test project. Produced by Stage 1.",
+  "type": "object",
+  "properties": {
+    "detectedAt": { "type": "string", "format": "date-time" },
+    "projectPath": { "type": "string" },
+    "framework": { "type": "string", "enum": ["playwright", "selenium-js", "selenium-java", "selenium-dotnet", "webdriverio", "nightwatch"] },
+    "frameworkSecondary": { "type": ["string", "null"] },
+    "language": { "type": "string", "enum": ["typescript", "javascript", "java", "csharp"] },
+    "testRunner": { "type": "string" },
+    "moduleSystem": { "type": "string", "enum": ["esm", "commonjs", "java", "dotnet"] },
+    "folders": {
+      "type": "object",
+      "properties": {
+        "specs": { "type": ["string", "null"] },
+        "pages": { "type": ["string", "null"] },
+        "fixtures": { "type": ["string", "null"] },
+        "data": { "type": ["string", "null"] },
+        "helpers": { "type": ["string", "null"] },
+        "auth": { "type": ["string", "null"] },
+        "config": { "type": ["string", "null"] }
+      }
+    },
+    "naming": {
+      "type": "object",
+      "properties": {
+        "specFileSuffix": { "type": "string" },
+        "pomFileSuffix": { "type": "string" },
+        "dataFileSuffix": { "type": "string" },
+        "testIdPrefix": { "type": "string" },
+        "classStyle": { "type": "string", "enum": ["PascalCase", "camelCase", "snake_case"] },
+        "methodStyle": { "type": "string", "enum": ["camelCase", "snake_case"] }
+      }
+    },
+    "codeStyle": {
+      "type": "object",
+      "properties": {
+        "describeNesting": { "type": "string" },
+        "assertionLibrary": { "type": "string" },
+        "asyncPattern": { "type": "string" },
+        "usesCustomTestFixture": { "type": "boolean" },
+        "customFixtureImport": { "type": ["string", "null"] },
+        "pomBaseClass": { "type": ["string", "null"] },
+        "pomLocatorStyle": { "type": "string" }
+      }
+    },
+    "auth": {
+      "type": "object",
+      "properties": {
+        "pattern": { "type": "string", "enum": ["storageState", "fixture", "beforeEach", "none"] },
+        "storageStatePath": { "type": ["string", "null"] },
+        "globalSetupFile": { "type": ["string", "null"] }
+      }
+    },
+    "styleSamples": {
+      "type": "object",
+      "properties": {
+        "specExample": { "type": "string" },
+        "pomExample": { "type": "string" }
+      }
+    }
+  }
+}

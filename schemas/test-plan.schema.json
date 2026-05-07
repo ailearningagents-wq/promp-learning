@@ -1,0 +1,68 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Test Plan",
+  "description": "Human-reviewable test plan produced by Stage 4. Review and approve before Stage 5 begins.",
+  "type": "object",
+  "required": ["generatedAt", "totalTestCases", "testCases"],
+  "properties": {
+    "generatedAt": { "type": "string", "format": "date-time" },
+    "totalTestCases": { "type": "integer" },
+    "summary": {
+      "type": "object",
+      "properties": {
+        "byType": {
+          "type": "object",
+          "properties": {
+            "smoke": { "type": "integer" },
+            "regression": { "type": "integer" },
+            "e2e": { "type": "integer" }
+          }
+        },
+        "byModule": { "type": "object" }
+      }
+    },
+    "testCases": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "module", "page", "type", "category", "description", "expectedResult"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^TC-[A-Z]+-[0-9]+" },
+          "module": { "type": "string" },
+          "page": { "type": "string" },
+          "type": { "type": "string", "enum": ["smoke", "regression", "e2e"] },
+          "category": {
+            "type": "string",
+            "enum": [
+              "form-submission",
+              "form-validation",
+              "boundary-value",
+              "conditional-logic",
+              "table-operations",
+              "modal-interaction",
+              "navigation",
+              "auth-boundary",
+              "e2e-journey",
+              "error-state",
+              "session"
+            ]
+          },
+          "priority": { "type": "string", "enum": ["critical", "high", "medium", "low"] },
+          "description": { "type": "string", "minLength": 10 },
+          "preconditions": { "type": "array", "items": { "type": "string" } },
+          "steps": { "type": "array", "items": { "type": "string" } },
+          "expectedResult": { "type": "string", "minLength": 10 },
+          "testDataRequirements": { "type": "object" },
+          "relatedElements": { "type": "array", "items": { "type": "string" } },
+          "heuristicSource": { "type": "string", "description": "Which QA heuristic rule generated this test (e.g., A1, B3, D2)" },
+          "approved": {
+            "type": "boolean",
+            "description": "Set to false to exclude this test from generation. Default: true (include all).",
+            "default": true
+          },
+          "notes": { "type": "string", "description": "Optional QA architect notes for this test case" }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "mcpServers": {
+    "playwright": {
+      "command": "npx",
+      "args": ["@playwright/mcp@latest"],
+      "env": {
+        "PLAYWRIGHT_HEADLESS": "false",
+        "_note_headless": "Set to true for CI/CD environments"
+      }
+    }
+  },
+  "_readme": [
+    "This file configures the Playwright MCP server for VS Code Agent Mode.",
+    "Place this file at: .vscode/mcp.json in your workspace root.",
+    "The Playwright MCP server gives the AI agent real browser control.",
+    "Prerequisites: Node.js 18+ must be installed.",
+    "The agent uses this to: login via OIDC, crawl DOM, capture element data."
+  ]
+}

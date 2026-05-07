@@ -1,0 +1,19 @@
+{
+  "name": "playwright-ts-generated",
+  "version": "1.0.0",
+  "description": "Auto-generated Playwright TypeScript test project",
+  "scripts": {
+    "test": "npx playwright test",
+    "test:smoke": "npx playwright test --grep @smoke",
+    "test:regression": "npx playwright test --grep @regression",
+    "test:e2e": "npx playwright test --grep @e2e",
+    "test:headed": "npx playwright test --headed",
+    "test:report": "npx playwright show-report",
+    "test:setup": "npx playwright test --project=setup"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.44.0",
+    "typescript": "^5.4.0",
+    "@types/node": "^20.0.0"
+  }
+}

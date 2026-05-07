@@ -1,0 +1,127 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Application Map",
+  "description": "Complete DOM structure map produced by Stage 3 DOM Crawl",
+  "type": "object",
+  "required": ["generatedAt", "application", "summary", "pages"],
+  "properties": {
+    "generatedAt": { "type": "string", "format": "date-time" },
+    "application": {
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "baseUrl": { "type": "string", "format": "uri" },
+        "environment": { "type": "string" }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "properties": {
+        "totalPages": { "type": "integer" },
+        "totalForms": { "type": "integer" },
+        "totalFields": { "type": "integer" },
+        "totalTables": { "type": "integer" },
+        "totalModals": { "type": "integer" },
+        "totalButtons": { "type": "integer" },
+        "conditionalRelationships": { "type": "integer" },
+        "userJourneys": { "type": "integer" }
+      }
+    },
+    "pages": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["pageId", "url", "title", "module"],
+        "properties": {
+          "pageId": { "type": "string", "pattern": "^P-[0-9]+" },
+          "url": { "type": "string" },
+          "title": { "type": "string" },
+          "heading": { "type": "string" },
+          "role": { "type": "string", "enum": ["dashboard", "list", "create", "edit", "detail", "report", "settings", "other"] },
+          "module": { "type": "string" },
+          "forms": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["formId", "fields"],
+              "properties": {
+                "formId": { "type": "string" },
+                "formAction": { "type": "string" },
+                "formMethod": { "type": "string" },
+                "fields": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": ["fieldId", "fieldType", "label"],
+                    "properties": {
+                      "fieldId": { "type": "string" },
+                      "fieldName": { "type": "string" },
+                      "fieldType": { "type": "string", "enum": ["text", "email", "password", "number", "date", "datetime-local", "checkbox", "radio", "select", "textarea", "file", "tel", "url"] },
+                      "label": { "type": "string" },
+                      "placeholder": { "type": ["string", "null"] },
+                      "required": { "type": "boolean" },
+                      "readonly": { "type": "boolean" },
+                      "disabled": { "type": "boolean" },
+                      "validationAttributes": {
+                        "type": "object",
+                        "properties": {
+                          "minLength": { "type": ["integer", "null"] },
+                          "maxLength": { "type": ["integer", "null"] },
+                          "min": { "type": ["string", "number", "null"] },
+                          "max": { "type": ["string", "number", "null"] },
+                          "pattern": { "type": ["string", "null"] },
+                          "step": { "type": ["string", "number", "null"] }
+                        }
+                      },
+                      "options": { "type": "array", "items": { "type": "object", "properties": { "value": { "type": "string" }, "label": { "type": "string" } } } },
+                      "dataTestId": { "type": ["string", "null"] },
+                      "ariaLabel": { "type": ["string", "null"] },
+                      "conditionallyVisible": { "type": "boolean" },
+                      "dependsOn": { "type": ["object", "null"] }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "buttons": { "type": "array" },
+          "tables": { "type": "array" },
+          "modals": { "type": "array" },
+          "navigation": { "type": "object" },
+          "errorContainers": { "type": "object" }
+        }
+      }
+    },
+    "conditionalLogic": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "pageId": { "type": "string" },
+          "trigger": { "type": "object", "properties": { "fieldId": { "type": "string" }, "value": { "type": "string" } } },
+          "effect": {
+            "type": "object",
+            "properties": {
+              "shows": { "type": "array", "items": { "type": "string" } },
+              "hides": { "type": "array", "items": { "type": "string" } },
+              "enables": { "type": "array", "items": { "type": "string" } },
+              "disables": { "type": "array", "items": { "type": "string" } }
+            }
+          }
+        }
+      }
+    },
+    "userJourneys": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "journeyId": { "type": "string", "pattern": "^J-[0-9]+" },
+          "name": { "type": "string" },
+          "steps": { "type": "array" }
+        }
+      }
+    },
+    "modules": { "type": "array", "items": { "type": "string" } }
+  }
+}

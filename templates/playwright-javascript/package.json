@@ -1,0 +1,16 @@
+{
+  "name": "playwright-js-generated",
+  "version": "1.0.0",
+  "description": "Auto-generated Playwright JavaScript test project",
+  "scripts": {
+    "test": "npx playwright test",
+    "test:smoke": "npx playwright test --grep @smoke",
+    "test:regression": "npx playwright test --grep @regression",
+    "test:e2e": "npx playwright test --grep @e2e",
+    "test:headed": "npx playwright test --headed",
+    "test:report": "npx playwright show-report"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.44.0"
+  }
+}
