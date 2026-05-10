@@ -1,19 +1,29 @@
 {
   "mcpServers": {
     "playwright": {
-      "command": "npx",
-      "args": ["@playwright/mcp@latest"],
+      "command": "./mcp-config/autotestgen-mcp/node_modules/.bin/mcp-server-playwright",
+      "args": [],
       "env": {
         "PLAYWRIGHT_HEADLESS": "false",
         "_note_headless": "Set to true for CI/CD environments"
       }
+    },
+    "autotestgen": {
+      "command": "node",
+      "args": ["./mcp-config/autotestgen-mcp/src/index.js"],
+      "env": {
+        "PLAYWRIGHT_HEADLESS": "false"
+      },
+      "_note": "Custom MCP server with high-level tools (mcp_oidc_login, mcp_capture_page_dom, mcp_save_storage_state, mcp_extract_routes, mcp_probe_conditional, mcp_pom_mine_locators). One call per tool replaces 8-15 playwright primitive calls — cuts token use ~85% and survives session/rate limits."
     }
   },
   "_readme": [
-    "This file configures the Playwright MCP server for VS Code Agent Mode.",
-    "Place this file at: .vscode/mcp.json in your workspace root.",
-    "The Playwright MCP server gives the AI agent real browser control.",
-    "Prerequisites: Node.js 18+ must be installed.",
-    "The agent uses this to: login via OIDC, crawl DOM, capture element data."
+    "Two MCP servers are registered:",
+    "  • playwright   — standard @playwright/mcp primitives (browser_navigate, browser_evaluate, etc.) — runs from local node_modules, no download at startup",
+    "  • autotestgen  — high-level tools that wrap multi-step browser work (see autotestgen-mcp/README.md)",
+    "SETUP (one-time): cd mcp-config/autotestgen-mcp && npm install",
+    "Both servers use the system-installed Chrome (preferred) or Edge — no Chromium download required.",
+    "Place this file at: .vscode/mcp.json in your workspace root, or symlink it.",
+    "Prerequisites: Node.js 18+, Google Chrome or Microsoft Edge installed on this machine."
   ]
 }

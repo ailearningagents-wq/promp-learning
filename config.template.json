@@ -1,5 +1,0 @@
-{
-  "_deprecated": true,
-  "_replacedBy": "pipeline.config.template.json",
-  "_action": "This file has been renamed. Please use 'pipeline.config.template.json' going forward and delete this file. The orchestrator no longer reads config.json — it reads pipeline.config.json."
-}

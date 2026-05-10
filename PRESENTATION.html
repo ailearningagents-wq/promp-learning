@@ -457,7 +457,7 @@ h3 { font-size: 22px; font-weight: 700; margin-bottom: 12px; }
       </li>
       <li>
         <span class="icon">🌐</span>
-        <span><strong>Real browser, real DOM</strong> — Stage 3 crawls with a live Playwright session, capturing every conditional field, hidden control, and Kendo/Material widget.</span>
+        <span><strong>Real browser, real DOM</strong> — Stage 3 crawls with your system-installed Chrome or Edge (via Playwright), capturing every conditional field, hidden control, and Kendo/Material widget. No Chromium download.</span>
       </li>
       <li>
         <span class="icon">🔄</span>
@@ -639,19 +639,19 @@ h3 { font-size: 22px; font-weight: 700; margin-bottom: 12px; }
       </div>
       <div class="cta-step">
         <div class="cnum">2</div>
-        <div class="ctext">Run <code>/utility-pom-locator-miner</code> in Copilot Chat to teach AutoTestGen your locator conventions</div>
+        <div class="ctext">Run <code>cd mcp-config/autotestgen-mcp &amp;&amp; npm install</code> — one-time local setup, no internet needed after this</div>
       </div>
       <div class="cta-step">
         <div class="cnum">3</div>
-        <div class="ctext">Start the Playwright MCP server: <code>npx @playwright/mcp@latest</code></div>
+        <div class="ctext">Ensure <strong>Chrome</strong> or <strong>Edge</strong> is installed. MCP servers start automatically from <code>node_modules/</code> — no <code>npx</code> or Chromium download</div>
       </div>
       <div class="cta-step">
         <div class="cnum">4</div>
-        <div class="ctext">Run <code>/master-orchestrator</code> in Copilot Chat — all 8 stages execute in sequence</div>
+        <div class="ctext">Run <code>/utility-pom-locator-miner</code> in Copilot Chat to teach AutoTestGen your locator conventions</div>
       </div>
       <div class="cta-step">
         <div class="cnum">5</div>
-        <div class="ctext">Review <code>output/coverage-gap-report.json</code> and the generated POMs + specs in your project</div>
+        <div class="ctext">Run <code>/master-orchestrator</code> in Copilot Chat — all 8 stages execute in sequence</div>
       </div>
     </div>
     <p class="note" style="margin-top:24px;">For a single new page: set <code>pipeline.mode: "single-route"</code> — done in minutes instead of days.</p>

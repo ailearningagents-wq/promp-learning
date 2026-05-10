@@ -9,6 +9,9 @@ tools:
   - read_file
   - create_file
   - replace_string_in_file
+  - mcp_capture_page_dom
+  - mcp_extract_routes
+  - mcp_probe_conditional
   - browser_navigate
   - browser_snapshot
   - browser_click
@@ -49,16 +52,20 @@ Instead, follow a strict page-wise streaming loop:
    the route queue + visited set in memory — never the full DOM of every page.
 2. **For each route**, perform the full per-page capture (Step 3), interaction
    probing (Step 4), and **incremental persist** before moving to the next:
-   - Append the page object to `output/application-map.json` (write-as-you-go,
-     do not buffer the entire `pages` array until the end).
+   - Write the **full page detail object** to `output/pages/<pageId>.json`
+     (create the `output/pages/` directory on the first page if it does not exist).
+   - Append/update only the **page index entry** in `output/application-map.json`.
+     The index entry contains only: `pageId`, `url`, `title`, `module`, `role`,
+     `status`. No form fields, buttons, or DOM detail go into this file —
+     those live exclusively in `output/pages/<pageId>.json`.
    - Update `output/pipeline-state.json` → `stage3.lastCompletedRoute` and
      `stage3.routesCompleted`.
 3. **Release per-page state** (DOM snapshot, interaction trees) before
-   advancing. Only the application-map skeleton + counters should persist
+   advancing. Only the application-map index skeleton + counters should persist
    across iterations.
 4. **Never** accumulate raw DOM, screenshots, or HAR for all pages in memory.
    If any artifact must be retained, write it to disk under `output/crawl/<pageId>/`
-   and reference it by path in the application map.
+   and reference it by path in the page detail file.
 
 ### Resume Mechanism (REQUIRED)
 
@@ -70,7 +77,9 @@ rather than restart from scratch:
 2. If `pipeline-state.json` shows `stage3` as `"in_progress"` (or the map exists
    but `stage3` is not `"completed"`):
    - Load `routesCompleted` and `lastCompletedRoute`.
-   - Rebuild `visitedRoutes` from the routes already present in the map.
+   - Rebuild `visitedRoutes` from the `pages[]` index entries in
+     `output/application-map.json`. The index is small (no DOM detail) and
+     safe to read in full.
    - Drop already-completed routes from `crawlQueue`.
    - Continue from the next pending route.
 3. If a route was partially captured (a `pageId` exists in the map but its
@@ -99,9 +108,11 @@ In single-route mode the crawler MUST:
    one URL: `config.pipeline.singleRoute`.
 2. Run Step 3 (Deep DOM Capture), Step 4 (Conditional Logic Probing), and any
    journey inference scoped to that route only.
-3. **Merge** the resulting page object into the existing `application-map.json`
-   if one is present (replacing any prior entry for the same URL); otherwise
-   create a fresh map containing only this page.
+3. **Merge** the resulting page object: write/overwrite `output/pages/<pageId>.json`
+   with the newly captured detail. Update the index entry for this page in
+   `output/application-map.json → pages[]` (replace if the `pageId` exists;
+   append if new). All other index entries and their `output/pages/` files are
+   left untouched.
 4. Update only the relevant counters in `pipeline-state.json`. Do **not** mark
    `stage3` as `"completed"` for the whole application — instead set
    `stage3.singleRouteCompleted: "<url>"` so the orchestrator knows this was a
@@ -315,7 +326,22 @@ If `pipeline.mode === "single-route"`:
 If `output/application-map.json` does not exist yet, start with an empty map and treat this
 run as a partial full-mode capture.
 
-Open browser using `output/auth/storageState.json` for authenticated context.
+**Browser session strategy (REQUIRED — prevents two browser instances):**
+
+The pipeline has two separate browser execution environments:
+- **Playwright MCP browser** — the shared browser driven by `browser_navigate`, `browser_snapshot`, etc.
+- **autotestgen MCP browser** — internal contexts that `mcp_extract_routes` and `mcp_capture_page_dom` create per-call, authenticated via `storageStatePath`.
+
+Both are visible processes to the user. Opening both simultaneously causes two browser windows.
+
+**When the `autotestgen` MCP server is registered:**
+- Do NOT open the Playwright MCP browser. `mcp_extract_routes` (Step 2) and `mcp_capture_page_dom` (Step 3) each manage their own authenticated browser context via `storageStatePath: "output/auth/storageState.json"`. No separate Playwright MCP browser is needed for the crawl.
+- Log: `[STAGE 3] autotestgen MCP available — browser managed per-call via storageStatePath. Skipping shared browser open.`
+
+**When the `autotestgen` MCP server is NOT registered (fallback path):**
+- Open the Playwright MCP shared browser using `browser_navigate` to `config.application.baseUrl`. The existing authenticated session from Stage 2 is still active in this shared browser — it does NOT need storageState re-injected. If Stage 2 completed successfully, the browser is already at the authenticated dashboard.
+- All subsequent `browser_navigate` / `browser_snapshot` / `browser_evaluate` calls in Steps 2 and 3 use this single shared browser session.
+- Log: `[STAGE 3] autotestgen MCP not available — using Playwright MCP shared browser for crawl.`
 
 ---
 
@@ -333,6 +359,17 @@ Open browser using `output/auth/storageState.json` for authenticated context.
 > Deferred routes (not crawled this run): [count]
 > Increase config.crawl.maxRoutes if full coverage is needed.
 > ```
+
+> **Preferred path for route discovery:** when the `autotestgen` MCP
+> server is registered, replace the per-URL link-extraction loop with:
+>
+> ```jsonc
+> mcp_extract_routes({ "url": <current URL>, "timeoutMs": 30000 })
+> ```
+> Returns `{ "routes": ["/foo", "/bar/123", ...] }` — already filtered to
+> same-origin paths and de-duplicated. Add new entries to `crawlQueue`
+> (subject to `maxRoutes` cap), then continue. The manual loop below is
+> the fallback only.
 
 For each URL in the crawl queue (up to `config.crawl.maxDepth` levels):
 
@@ -366,6 +403,35 @@ Repeat until crawl queue is empty OR `maxDepth` is reached.
 ---
 
 ## Step 3 — Deep DOM Capture Per Page
+
+> **Preferred path (REQUIRED when the `autotestgen` MCP server is registered):**
+> Replace sub-steps 3a + 3b + 3c + 3d + 3e + 3f + 3g + 3h with **one** call:
+>
+> ```jsonc
+> mcp_capture_page_dom({
+>   "url":              <route URL>,
+>   "waitForSelector":  config.crawl.waitForSelector || "body",
+>   "timeoutMs":        30000,
+>   "storageStatePath": "output/auth/storageState.json"
+> })
+> ```
+>
+> The tool returns a single structured object with these fields:
+> `{ metadata, forms, buttons, tables, modals, errorContainers, navigation }`.
+> Each field already contains everything sub-steps 3a–3h ask for, including
+> hidden-control flags, UI-library detection, `componentSelector`, and
+> `interactionStrategy` — no JavaScript scripts to author, no
+> `browser_evaluate` calls. Write the returned object to
+> `output/pages/<pageId>.json`. Append/update the lightweight index entry
+> (`pageId`, `url`, `title`, `module`, `role`, `status`) in
+> `output/application-map.json → pages[]`.
+>
+> Token cost: **~3000 tokens saved per page** vs. the manual sub-steps.
+>
+> The sub-steps below remain as the **fallback** for environments where
+> the `autotestgen` server is not registered, and as the schema reference
+> describing what the tool returns. Do NOT execute them when the
+> preferred path is taken.
 
 For each discovered route, navigate to it and perform a **complete DOM capture**.
 
@@ -693,6 +759,35 @@ strategy can be hand-tuned later.
 ## Step 4 — Conditional Logic Probing
 
 **Only execute this step if `config.crawl.interactionProbing` is `true`.**
+
+> **Preferred path for conditional probing:** when the `autotestgen`
+> MCP server is registered, replace the per-trigger DOM-cycle loop with
+> one call per `(field, optionValue)` pair:
+>
+> ```jsonc
+> mcp_probe_conditional({
+>   "url":             <page URL>,
+>   "formId":          <formId>,
+>   "triggerFieldId":  <fieldId>,
+>   "triggerValue":    <option value>,
+>   "storageStatePath": "output/auth/storageState.json"
+> })
+> ```
+> Returns:
+> ```json
+> { "ok": true,
+>   "trigger": { "fieldId": "category-select", "value": "TypeA" },
+>   "effect":  { "shows": ["typeA-detail-field"], "hides": ["typeB-detail-field"], "enables": [], "disables": [] } }
+> ```
+> The tool tries native `selectOption`, Kendo dropdown click-list-item,
+> and Material `mat-select` strategies in order — no need for the prompt
+> to choose. Use `effect` directly to populate
+> `application-map.json → conditionalLogic[]`.
+>
+> Honour `config.crawl.maxOptionsPerField` by sampling option values
+> (first, last, uniform) before issuing tool calls.
+>
+> The manual instructions below remain as the fallback only.
 
 For each form discovered, probe for conditional fields. Use the
 `interactionStrategy` recorded in 3h — do NOT assume native `<select>`

@@ -1,0 +1,20 @@
+{
+  "servers": {
+    "playwright": {
+      "type": "stdio",
+      "command": "./mcp-config/autotestgen-mcp/node_modules/.bin/mcp-server-playwright",
+      "args": [],
+      "env": {
+        "PLAYWRIGHT_HEADLESS": "false"
+      }
+    },
+    "autotestgen": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["./mcp-config/autotestgen-mcp/src/index.js"],
+      "env": {
+        "PLAYWRIGHT_HEADLESS": "false"
+      }
+    }
+  }
+}

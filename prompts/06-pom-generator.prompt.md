@@ -33,10 +33,15 @@ raw selectors. If a POM already exists for a page, extend it — never recreate 
 5. **No assertions in POMs** — POMs only perform actions and return data; tests do the asserting
 
 ## Inputs Required
-- `output/application-map.json` (from Stage 3) — pages, fields, **uiLibrary**,
-  **componentSelector**, **interactionStrategy** per field
-- `output/test-plan.json` (from Stage 4) — drives **which** POMs are
-  required, via each test case's `artifactRequirements.pageClass`
+- `output/application-map.json` (from Stage 3) — page INDEX (`pageId`, `url`,
+  `title`, `module`, `role`, `status`); load for the full page list only
+- `output/pages/<pageId>.json` (from Stage 3) — full DOM detail per page
+  (fields, **uiLibrary**, **componentSelector**, **interactionStrategy**);
+  load only for the current page being generated
+- `output/test-plan.json` (from Stage 4) — page INDEX; drives **which** POMs
+  are required (via `testCasesFile` path per page)
+- `output/test-cases/<pageId>.json` (from Stage 4) — full test cases per page;
+  load only for the current page to collect `artifactRequirements.pageClass`
 - `output/project-fingerprint.json` (from Stage 1, if existing project)
 - `config.project.newProjectTechStack` (for new projects)
 - `output/pipeline-state.json` — for resume + single-route mode
@@ -48,21 +53,40 @@ raw selectors. If a POM already exists for a page, extend it — never recreate 
 This stage MUST stream page-by-page rather than loading every page's POM
 in memory and writing at the end.
 
+**Per-route-loop override (check FIRST, before all other mode logic):**
+Read `output/pipeline-state.json → pipeline.codegenMode`. If it equals
+`"per-route-loop"`, treat this invocation exactly like `single-route` mode:
+- Effective single route = `pipeline-state.json → pipeline.codegenRoute`.
+- Do NOT read `config.pipeline.mode` or `config.pipeline.singleRoute` for
+  routing decisions in this invocation — `codegenRoute` is the authority.
+- Apply all single-route rules below (step 3) using `codegenRoute` as the
+  route value. Do NOT set `singleRouteCompleted` — the orchestrator manages
+  per-route progress via `perRouteCodegen.routesCompleted`.
+- Log: `[STAGE 6] Per-route-loop mode — generating POM for route: [codegenRoute]`
+
 1. After each POM file is written or extended, update
    `pipeline-state.json` → `stage6.pagesCompleted` and persist before
    advancing to the next page.
 2. **Resume:** on startup, read `pipeline-state.json`. Skip any page
    already in `stage6.pagesCompleted` whose POM file exists on disk.
-3. **Single-route mode:** if `pipeline.mode === "single-route"`, the only
-   POM to create or extend is the one whose page URL matches
-   `pipeline.singleRoute`. Every other POM is left untouched.
+3. **Single-route mode:** if `pipeline.mode === "single-route"` (or the
+   per-route-loop override above is active), the only POM to create or
+   extend is the one whose page URL matches the configured route. Every
+   other POM is left untouched.
+   After writing or extending that POM (non-loop single-route only), set
+   `stages.stage6.singleRouteCompleted` to the value of `pipeline.singleRoute`
+   in `pipeline-state.json`. Do **not** set `stages.stage6.status` to
+   `"completed"` — leave it as `"in_progress"` so a subsequent full run
+   knows Stage 6 has not processed all pages.
 4. The set of POM files this stage owns is determined by collecting the
    unique `artifactRequirements.pageClass` values across the test plan
-   (filtered by single route if applicable). **When collecting these values,
-   read only the `artifactRequirements.pageClass` field from each test case —
-   do NOT load `steps[]`, `testDataRequirements`, `relatedElements`, or any
-   other fields.** A POM only present in the application map but never
-   referenced by any test case can be skipped unless
+   (filtered by single route if applicable). For each page in
+   `output/test-plan.json → pages[]`, load `output/test-cases/<pageId>.json`
+   and extract only the `artifactRequirements.pageClass` field from each test
+   case — do NOT load `steps[]`, `testDataRequirements`, `relatedElements`,
+   or any other fields. Release each file immediately after extraction.
+   A POM only present in the application map but never referenced by any test
+   case can be skipped unless
    `config.generation.generateUnreferencedPoms === true`.
 
 ---
@@ -141,7 +165,10 @@ export abstract class BasePage {
   }
 
   async waitForPageLoad(): Promise<void> {
-    await this.page.waitForLoadState('networkidle');
+    // IMPORTANT: Do NOT use 'networkidle' — UI-library-heavy apps (Kendo, Angular Material,
+    // React Query, etc.) continuously poll APIs and never reach networkidle within reasonable
+    // timeouts, causing every test to time out. Use 'load' (DOM + subresources loaded) instead.
+    await this.page.waitForLoadState('load');
   }
 
   async getPageTitle(): Promise<string> {
@@ -169,6 +196,59 @@ export abstract class BasePage {
   async getErrorMessage(): Promise<string> {
     const error = this.page.locator('[role="alert"].error, .error-message, .alert-danger').first();
     return await error.textContent() ?? '';
+  }
+
+  // ── File Download Helper ──────────────────────────────────────────────────
+  // ALWAYS register the download listener BEFORE clicking — use Promise.all.
+  // Never call waitForEvent('download') after click(); that is a race condition
+  // and will time out when the browser delivers the download synchronously.
+  async clickAndDownload(triggerLocator: Locator): Promise<import('@playwright/test').Download> {
+    const [download] = await Promise.all([
+      this.page.waitForEvent('download'),
+      triggerLocator.click(),
+    ]);
+    return download;
+  }
+
+  // ── Kendo UI Shared Helpers ───────────────────────────────────────────────
+
+  // Kendo DropDownList — click wrapper → wait for popup → click matching item.
+  // The wrapper is the VISIBLE span/div rendered by Kendo, NOT the hidden native <input>.
+  async selectKendoOption(wrapper: Locator, optionText: string): Promise<void> {
+    await wrapper.click();
+    const list = this.page.locator('.k-list-container, .k-popup').last();
+    await list.waitFor({ state: 'visible', timeout: 8000 });
+    await list.locator('.k-list-item, .k-item', { hasText: optionText }).click();
+    // Verify value bound (guards against stale popup)
+    const displayed = await wrapper.locator('.k-input-inner, .k-input-value-text').inputValue().catch(
+      () => wrapper.locator('.k-input-inner, .k-input-value-text').textContent()
+    );
+    if (typeof displayed === 'string' && !displayed.includes(optionText)) {
+      await wrapper.click();
+      await list.waitFor({ state: 'visible', timeout: 8000 });
+      await list.locator('.k-list-item, .k-item', { hasText: optionText }).click();
+    }
+  }
+
+  // Kendo Switch — click the VISIBLE .k-switch wrapper, not the hidden native <input>.
+  async clickKendoSwitch(switchWrapper: Locator): Promise<void> {
+    await switchWrapper.click();
+    await this.page.waitForTimeout(150); // allow MVVM binding to propagate
+  }
+
+  // Kendo DatePicker — type ISO date into the paired input; blur to commit.
+  async setKendoDate(inputLocator: Locator, isoDate: string): Promise<void> {
+    await inputLocator.fill(isoDate);
+    await inputLocator.blur();
+  }
+
+  // Fill a form field and ensure Kendo MVVM dirty-detection fires.
+  // .fill() alone does not dispatch input/change events in all Playwright builds;
+  // dispatch them explicitly so Kendo marks the form dirty and enables Save/Cancel.
+  async fillKendoInput(inputLocator: Locator, value: string): Promise<void> {
+    await inputLocator.fill(value);
+    await inputLocator.dispatchEvent('input');
+    await inputLocator.dispatchEvent('change');
   }
 }
 ```
@@ -253,6 +333,97 @@ this.prioritySelect   = page.locator("mat-select[formcontrolname='priority']");
 // Material checkbox — target the touch target, not the inner <input>
 this.agreeCheckbox    = page.locator("mat-checkbox[formcontrolname='agree'] .mat-mdc-checkbox-touch-target");
 ```
+
+---
+
+### Kendo UI Locator Resolution Rules (CRITICAL — apply to every Kendo field)
+
+Kendo UI renders its widgets by hiding the native HTML form element and
+inserting a custom widget element alongside it. **The native element is
+always `style="display:none"` or has `type="hidden"`.** Playwright's
+`toBeVisible()` and `.click()` will fail silently or time out when targeting it.
+
+#### Rule K1 — Kendo DropDownList / ComboBox
+
+The native `<input data-role="dropdownlist" id="Country">` is hidden.
+The clickable Kendo widget is a sibling `<span class="k-dropdownlist">`.
+
+**Do NOT use the native `#Country` input as the POM locator.**
+Use one of these patterns in order of preference:
+```javascript
+// Pattern 1 — aria-owns (most reliable, if present)
+this.countryDropdown = page.locator('[aria-owns*="Country_listbox"]');
+
+// Pattern 2 — sibling span filter
+this.countryDropdown = page.locator('.k-dropdownlist').filter({ has: page.locator('[id="Country"]').or(page.locator('[name="Country"]')) });
+
+// Pattern 3 — data-role attribute on the widget span
+this.countryDropdown = page.locator('span[aria-label*="Country"], span[aria-describedby*="Country"]');
+
+// Pattern 4 — fallback: locate by wrapping label
+this.countryDropdown = page.locator('.k-dropdownlist').nth(0); // only when index is unambiguous
+```
+The `selectKendoOption(this.countryDropdown, 'USA')` helper in BasePage handles the click-open → wait-for-popup → click-item sequence.
+
+#### Rule K2 — Kendo Switch
+
+The native `<input type="checkbox" id="Communication" data-role="switch">` is hidden.
+The visible Kendo switch is a `<span class="k-switch">` wrapping it.
+
+**Do NOT use `page.locator('#Communication')` for assertions or clicks.**
+Use:
+```javascript
+// Pattern 1 — k-switch wrapper that contains or is adjacent to the hidden input
+this.communicationSwitch = page.locator('.k-switch').filter({ has: page.locator('#Communication') });
+
+// Pattern 2 — if the switch wraps the input directly
+this.communicationSwitch = page.locator('#Communication').locator('xpath=ancestor::span[contains(@class,"k-switch")]');
+```
+Use `clickKendoSwitch(this.communicationSwitch)` from BasePage to toggle it.
+For **visibility assertions** (`toBeVisible()`), always use the `.k-switch` wrapper, never the hidden input.
+
+For reading the current state (on/off):
+```javascript
+async isSwitchOn(switchWrapper: Locator): Promise<boolean> {
+  return await switchWrapper.evaluate(el => el.classList.contains('k-switch-on'));
+}
+```
+
+#### Rule K3 — Kendo DatePicker
+
+The `<input id="BirthDate" data-role="datepicker">` input IS visible (it shows
+the formatted date). Use it for `.fill()` via `setKendoDate()`.
+The calendar trigger button (`.k-select` or `.k-button`) is for calendar UI tests only.
+Prefer `setKendoDate(this.birthDateInput, '1990-01-15')` over calendar UI navigation.
+
+#### Rule K4 — Kendo Grid Empty State
+
+After a search/filter that empties a Kendo grid, the empty state HTML is:
+```html
+<tr class="k-grid-norecords"><td colspan="X">No records available.</td></tr>
+```
+Use `page.locator('tr.k-grid-norecords, .k-grid-norecords-template')` not `.k-nodata`.
+Always add `await page.waitForTimeout(500)` AFTER the search/filter action and BEFORE
+the empty-state assertion to let Kendo's debounce and XHR complete.
+
+#### Rule K5 — Kendo ListView / ListBox Empty State
+
+After a search that empties a Kendo ListView, check `await listviewItems.count() === 0` as the primary assertion. Do NOT rely on a `.k-listview-norecords` element alone — it may not be rendered until AFTER the listview re-renders.
+
+#### Rule K6 — Fill + Dirty State
+
+After calling `.fill()` on any Kendo-bound input field, call `fillKendoInput()` from BasePage (which dispatches `input` + `change` events) rather than plain `.fill()`. This is required for the Kendo MVVM ViewModel to register the field as changed and enable Save/Cancel buttons.
+
+**Do NOT use plain `.fill()` in POM methods that feed Kendo forms.**
+
+#### Rule K7 — Form Buttons (Save / Cancel)
+
+Save and Cancel buttons in Kendo forms are typically `disabled` until the form
+is "dirty" (any field value changed). **Do not click Cancel/Save in a test
+unless the form has already been dirtied** via `fillKendoInput()` or a Kendo
+component interaction. If the button is disabled, Playwright will time out.
+
+---
 
 **Action method rule:** every Kendo / Material control gets a dedicated
 action method on the POM that implements the captured

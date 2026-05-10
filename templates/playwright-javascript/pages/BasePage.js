@@ -13,7 +13,9 @@ class BasePage {
   }
 
   async waitForPageLoad() {
-    await this.page.waitForLoadState('networkidle');
+    // Do NOT use 'networkidle' — Kendo/Angular Material apps poll continuously
+    // and networkidle never resolves within test timeouts. Use 'load' instead.
+    await this.page.waitForLoadState('load');
   }
 
   async getPageTitle() {

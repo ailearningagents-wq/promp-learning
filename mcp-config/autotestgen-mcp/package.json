@@ -1,0 +1,23 @@
+{
+  "name": "autotestgen-mcp",
+  "version": "0.1.0",
+  "description": "Custom MCP server for AutoTestGen — high-level tools that wrap multi-step Playwright work into single calls. Reduces LLM token usage and improves reliability over session/rate limits.",
+  "private": true,
+  "main": "src/index.js",
+  "bin": {
+    "autotestgen-mcp": "src/index.js"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "start:playwright-mcp": "mcp-server-playwright"
+  },
+  "dependencies": {
+    "@playwright/mcp": "^0.0.29",
+    "playwright": "^1.52.0"
+  },
+  "_notes": [
+    "Run 'npm install' once in this folder to install all dependencies locally.",
+    "The server uses your system-installed Chrome or Edge — no browser download needed.",
+    "Do NOT run 'npx playwright install' — that would download Chromium, which is not used."
+  ]
+}

@@ -29,6 +29,30 @@ and seed `pipeline-state.json` so downstream stages can checkpoint.
 
 ---
 
+## Preferred path — single `mcp_bootstrap_output` call
+
+When the `autotestgen` MCP server is registered, replace Steps 1 and 2 below
+with one call:
+
+```jsonc
+mcp_bootstrap_output({
+  "workspaceRoot": "<absolute path to workspace root>",
+  "pipelineMode":  "<resolved pipeline.mode>",
+  "singleRoute":   "<pipeline.singleRoute or null>",
+  "codegenMode":   null,
+  "codegenRoute":  null
+})
+```
+
+The tool creates `output/`, `output/logs/`, `output/pages/`,
+`output/test-cases/` and either seeds a fresh `pipeline-state.json` or
+patches `pipeline.mode` + `pipeline.singleRoute` in an existing one —
+all in one atomic call. Steps 1 and 2 below remain as the **fallback** when
+the server is not available. Step 3 (tech stack hint) and Step 4 (completion
+log) still run either way.
+
+---
+
 ## Step 1 — Create Output Directory Structure
 
 This stage's tools list does not include `run_in_terminal`. To create
@@ -56,14 +80,29 @@ file under `output/`.
 ## Step 2 — Seed `pipeline-state.json`
 
 If `output/pipeline-state.json` already exists, **do not overwrite it** —
-the orchestrator's resume logic depends on it. Update only `pipeline.lastUpdated`
-and confirm `stage0.status` is `"completed"`.
+the orchestrator's resume logic depends on it. Update **only** the following
+fields and leave everything else (stage statuses, counters, checkpoint arrays)
+untouched:
 
-If it does not exist, write the schema defined in the master orchestrator
+- `pipeline.mode` — set to the current run's resolved pipeline mode (`"full"` or `"single-route"`).
+  This MUST be updated even when the file already exists, because the orchestrator's
+  Stage 0 validity check requires `pipeline.mode` to match the current run.
+  Changing from `"full"` to `"single-route"` (or vice versa) without updating this
+  field causes a perpetual mode-mismatch that blocks Stage 0 on every re-invocation.
+- `pipeline.singleRoute` — set to the resolved single-route value, or `null` for full mode.
+- `pipeline.lastUpdated` — set to current ISO timestamp.
+- `stages.stage0.status` — confirm it is `"completed"`; set it if it is not.
+
+If `output/pipeline-state.json` does not exist, write the schema defined in the master orchestrator
 (see "Resume / Checkpointing"), with these initial values:
 
 - `pipeline.mode` = the resolved pipeline mode
 - `pipeline.singleRoute` = the resolved single-route value (or `null`)
+- `pipeline.codegenMode` = `null`
+- `pipeline.codegenRoute` = `null`
+- `perRouteCodegen.routesQueued` = `[]`
+- `perRouteCodegen.routesCompleted` = `[]`
+- `perRouteCodegen.lastRouteStarted` = `null`
 - `stages.stage0.status` = `"completed"`
 - All other stage statuses = `"pending"`
 - All counters = `0`

@@ -9,6 +9,8 @@ description: >
 tools:
   - read_file
   - create_file
+  - mcp_oidc_login
+  - mcp_save_storage_state
   - browser_navigate
   - browser_snapshot
   - browser_click
@@ -68,8 +70,9 @@ already exists.
       `cookies` (non-empty array) or `origins[0].localStorage`
       (non-empty array). Otherwise it is not a usable storage state →
       fall through to Step 1.
-   c. **Live probe:** open a fresh browser context with this storage state,
-      `browser_navigate` to `application.baseUrl + auth.postLoginUrlPattern`,
+   c. **Live probe:** using the **existing** Playwright MCP browser (do NOT open a
+      new context — that causes a second browser window), `browser_navigate` to
+      `application.baseUrl + auth.postLoginUrlPattern`,
       `browser_wait_for` (timeout 30s) on the configured
       `crawl.waitForSelector` (or `body`). If the navigation lands on the
       authenticated dashboard (URL contains `postLoginUrlPattern` and no
@@ -142,6 +145,44 @@ The application requires no authentication.
    [AUTH] auth.type = "none" — no login required. Skipping browser auth flow.
    ```
 3. Proceed directly to **Step 8 — Generate Auth Fixture Stub (no-auth variant).**
+
+---
+
+## Step 2.5 — Preferred path: single `mcp_oidc_login` call
+
+**If the `autotestgen` MCP server is registered** (see
+`mcp-config/mcp.json`), do the entire login in ONE tool call instead of
+walking Steps 3–5 manually:
+
+```jsonc
+mcp_oidc_login({
+  "baseUrl":             config.application.baseUrl,
+  "authType":            config.auth.type,
+  "loginPageTitle":      config.auth.loginPageTitle,
+  "usernameSelector":    config.auth.usernameSelector,
+  "passwordSelector":    config.auth.passwordSelector,
+  "submitSelector":      config.auth.submitSelector,
+  "postLoginUrlPattern": config.auth.postLoginUrlPattern,
+  "username":            <resolved $APP_USERNAME>,
+  "password":            <resolved $APP_PASSWORD>,
+  "timeoutMs":           30000
+})
+```
+
+The tool follows up to 5 SSO redirects, handles step-up flows, detects MFA,
+and returns:
+```json
+{ "ok": true, "alreadyAuthenticated": false, "finalUrl": "https://app/dashboard" }
+```
+or:
+```json
+{ "ok": false, "error": "MFA challenge detected. ..." }
+```
+
+If `ok` is `true` → skip Steps 3–5 and proceed directly to Step 6.
+If the tool returns an MFA error → STOP per the MFA handling block in Step 4.
+If the `autotestgen` server is NOT available, fall through to Step 3 and
+follow the manual primitives below.
 
 ---
 
@@ -293,7 +334,29 @@ Save the current browser session as a Playwright `storageState.json`. This
 file is the foundation for every generated test — get this wrong and the
 whole pipeline downstream breaks.
 
-**Procedure (exact tool calls, in order):**
+### Preferred path — `mcp_save_storage_state` (one call)
+
+```jsonc
+mcp_save_storage_state({ "outPath": "output/auth/storageState.json" })
+```
+
+Returns:
+```json
+{ "ok": true, "path": "output/auth/storageState.json", "cookies": 12, "localStorageEntries": 4 }
+```
+
+If `cookies + localStorageEntries === 0`, the auth did not actually take —
+re-run Step 4 once before failing.
+
+Log only:
+```
+[STAGE 2] storageState.json saved — [N] cookie(s), [M] localStorage entry(ies).
+```
+
+If `mcp_save_storage_state` is unavailable, use the **fallback procedure**
+below.
+
+### Fallback procedure (manual, exact tool calls in order)
 
 1. **Capture cookies** with `browser_evaluate`:
    ```javascript
@@ -356,18 +419,32 @@ in any other file. Treat it as sensitive — it contains live session tokens.
 
 ## Step 7 — Verify Auth State is Reusable
 
+> **Do NOT open a new browser context or window for this step.** The Playwright MCP shares
+> a single browser session; creating an additional context to verify the file causes a
+> second visible browser window that persists into Stage 3. The verification below uses the
+> existing browser session and file-level checks — both are sufficient and avoid the second instance.
+
 To confirm the saved state works:
 
-1. Open a NEW browser context using the saved `storageState.json`
-2. Navigate directly to `config.application.baseUrl` + `config.auth.postLoginUrlPattern` —
-   **wait up to 30 seconds** for the page to respond (use `browser_wait_for` on
-   `config.crawl.waitForSelector` or `body`). If no response within 30 seconds →
-   treat as a verification failure and proceed to the failure handling below.
-3. Confirm the app loads in authenticated state (no redirect to login)
-4. Take a snapshot confirming the authenticated view
-5. Close the browser context
+1. **Structural check:** read `output/auth/storageState.json` with `read_file`. Confirm:
+   - File parses as JSON.
+   - `cookies` array is non-empty, OR `origins[0].localStorage` array is non-empty.
+   - If both arrays are empty → the save did not capture the session. Re-run Steps 4–6 once.
 
-If this verification fails → re-run Steps 4–6 once. If it fails again → STOP with error.
+2. **Live check:** using the **existing** Playwright MCP browser session (already at the
+   authenticated dashboard after Steps 3–5), navigate to
+   `config.application.baseUrl + config.auth.postLoginUrlPattern` and take a snapshot.
+   Confirm:
+   - The URL contains `postLoginUrlPattern` (no redirect to login).
+   - A known authenticated UI element is visible (nav menu, user profile heading, dashboard).
+
+3. If the live check fails (login page appears or navigation times out after 30s) →
+   re-run Steps 4–6 once. If it fails a second time → STOP with error.
+
+Log:
+```
+[STAGE 2] Verification PASSED — storageState.json is valid and session is active.
+```
 
 ---
 

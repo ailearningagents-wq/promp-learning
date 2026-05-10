@@ -23,7 +23,9 @@ export abstract class BasePage {
   }
 
   async waitForPageLoad(): Promise<void> {
-    await this.page.waitForLoadState('networkidle');
+    // Do NOT use 'networkidle' — Kendo/Angular Material apps poll APIs continuously;
+    // networkidle never resolves within test timeouts. Use 'load' instead.
+    await this.page.waitForLoadState('load');
   }
 
   async getPageTitle(): Promise<string> { return this.page.title(); }

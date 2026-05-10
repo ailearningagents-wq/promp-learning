@@ -18,8 +18,14 @@ map against what was actually generated in the test suite. Identify gaps, catego
 by severity, and produce an actionable report for the QA architect.
 
 ## Inputs Required
-- `output/application-map.json` (from Stage 3)
-- `output/test-plan.json` (from Stage 4)
+- `output/application-map.json` (from Stage 3) — page INDEX only;
+  load for the page list, then load per-page detail on demand
+- `output/pages/<pageId>.json` (from Stage 3) — full DOM detail per page
+  (forms, buttons, modals, conditional-logic); load one at a time during Step 1
+- `output/test-plan.json` (from Stage 4) — page INDEX only;
+  load for the page list, then load per-page test cases on demand
+- `output/test-cases/<pageId>.json` (from Stage 4) — test IDs and coverage
+  detail per page; load one at a time during Step 1
 - `output/pipeline-state.json` (current counters)
 - All generated spec files (from Stage 7) — processed **one file at a time** (see Step 0)
 - All generated POM files (from Stage 6)
@@ -30,14 +36,38 @@ by severity, and produce an actionable report for the QA architect.
 
 Before doing any work, check `output/pipeline-state.json`:
 
-- If `stages.stage8.status` is `"completed"` → log `[STAGE 8] Already completed — skipping.` and exit.
+- If `stages.stage8.status` is `"completed"` **AND** `pipeline.mode !== "single-route"` →
+  log `[STAGE 8] Already completed — skipping.` and exit.
+- If `stages.stage8.status` is `"completed"` **AND** `pipeline.mode === "single-route"` →
+  do NOT exit. A prior full-run completion must not block gap analysis for the new single route.
+  Log `[STAGE 8] Prior full-run completion detected — re-entering for single-route: [pipeline.singleRoute].`
+  Scope the entire stage to the pages and spec files associated with `pipeline.singleRoute` only.
 - If `stages.stage8.pagesAnalyzed` exists and is non-empty → resume from where the previous run stopped.
   Log `[STAGE 8] Resuming — [N] pages already analyzed.`
 - Otherwise → start fresh.
 
 Set `stages.stage8.status` to `"in_progress"` in `pipeline-state.json` before continuing.
 
-**Streaming rule:** Do NOT read all spec files into memory at once. Process one spec file at a time:
+**Preferred path — `mcp_scan_spec_coverage` call:**
+
+When the `autotestgen` MCP server is registered, replace the per-file spec
+scan loop (items 1–4 below) with one call:
+
+```jsonc
+mcp_scan_spec_coverage({
+  "specFiles": ["<abs path>/create.spec.ts", "<abs path>/list.spec.ts", ...]
+})
+```
+
+Pass the list from `stages.stage7.specFilesCompleted` (or the fallback scan
+result). Returns `{ byFile: { "path": { testIds, testNames, rawSelectorCount,
+rawSelectorSamples, hardcodedAssertionCount, qualityFlags } }, totalFiles }`.
+Store this result as `specCoverageResult` — pass it to `mcp_compute_coverage_gaps`
+in Step 1. The fallback loop below applies when the server is not available.
+
+---
+
+**Streaming rule (fallback):** Do NOT read all spec files into memory at once. Process one spec file at a time:
 1. Get the list of spec files from `stages.stage7.specFilesCompleted` in `pipeline-state.json`.
    **If `stages.stage7.specFilesCompleted` is absent or empty**, fall back to scanning the
    project specs folder (`projectFingerprint.folders.specs`) recursively for files matching the
@@ -72,17 +102,40 @@ Set `stages.stage8.status` to `"in_progress"` in `pipeline-state.json` before co
 
 ## Step 1 — Build Coverage Matrix
 
-**Do NOT read `output/application-map.json` in full before building the
-matrix.** For a large application the full map can exhaust context before
-any gaps are reported. Instead:
-1. Read `output/application-map.json` and extract only the **top-level page
-   list** (page routes / IDs).
+**Preferred path — `mcp_compute_coverage_gaps` call:**
+
+When the `autotestgen` MCP server is registered, replace the per-page
+comparison loop (items 1–3 below) with one call:
+
+```jsonc
+mcp_compute_coverage_gaps({
+  "pagesDir":     "<absolute path to output/pages/>",
+  "testCasesDir": "<absolute path to output/test-cases/>",
+  "specCoverage": <specCoverageResult from Step 0>
+})
+```
+
+Returns `{ gaps, pagesCoverage, summary: { totalPages, pagesWithGaps,
+coveragePct, gapsBySeverity } }`. Store as `gapResult`. Proceed directly to
+**Step 2** using `gapResult.gaps` for the gap identification narrative and
+Step 3 for unauthorized access reporting from `gapResult.pagesCoverage`.
+The fallback loop below applies when the server is not available.
+
+---
+
+**Coverage matrix (fallback):** Do NOT read `output/application-map.json` in full.
+It is an index only — no DOM detail is stored there. Instead:
+1. Read `output/application-map.json` and extract the **page index**
+   (`pageId`, `url`, `title`, `module`, `role`, `status`).
 2. For each page:
-   a. Load only that page's entry from the application map.
+   a. Load `output/pages/<pageId>.json` to obtain the full page detail
+      (forms, fields, buttons, modals, conditional-logic branches).
+      Additionally load `output/test-cases/<pageId>.json` to obtain the
+      test IDs that were generated for this page.
    b. Build the coverage matrix entry for that page by comparing its forms,
       fields, buttons, modals, and conditional-logic branches against the test
-      IDs already extracted in Step 0.
-   c. Release the page data before advancing to the next page.
+      IDs already extracted in Step 0 and from the per-page test-cases file.
+   c. Release both files before advancing to the next page.
 3. After all pages are processed, assemble the final matrix summary.
 
 For every page and component in the application map, create a coverage matrix:

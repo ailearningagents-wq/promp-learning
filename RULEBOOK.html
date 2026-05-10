@@ -363,7 +363,7 @@
     <tbody>
       <tr><td>Node.js</td><td>≥ 18 LTS</td></tr>
       <tr><td>VS Code</td><td>≥ 1.89 with GitHub Copilot Chat extension</td></tr>
-      <tr><td>Playwright MCP</td><td><code>npx @playwright/mcp@latest</code></td></tr>
+      <tr><td>Google Chrome <em>or</em> Microsoft Edge</td><td>System-installed. Chrome is preferred; Edge is the automatic fallback. The pipeline uses the installed browser directly — no Chromium download.</td></tr>
       <tr><td>GitHub Copilot</td><td>Agent mode enabled (<code>mode: agent</code> in prompt frontmatter)</td></tr>
       <tr><td>Target application</td><td>Must be reachable at <code>application.baseUrl</code> from your machine</td></tr>
       <tr><td>OIDC / Auth credentials</td><td>Must be set in <code>.env</code> before running</td></tr>
@@ -372,6 +372,9 @@
 
   <div class="card info">
     <strong>Note:</strong> The pipeline drives a real browser via the Playwright MCP server. The target application must be accessible (VPN if needed) before running Stage 2 onwards.
+  </div>
+  <div class="card success">
+    <strong>One-time setup:</strong> Run <code>cd mcp-config/autotestgen-mcp &amp;&amp; npm install</code> to install all packages locally. Both MCP servers execute from <code>node_modules/</code> — nothing is downloaded at runtime.
   </div>
 </section>
 
@@ -385,7 +388,8 @@
     <li>Clone or open the <strong>AutoTestGen workspace</strong> in VS Code.</li>
     <li>Copy <code>pipeline.config.template.json</code> → <code>pipeline.config.json</code> in the workspace root.</li>
     <li>Copy <code>.env.template</code> → <code>.env</code> and fill in all required values (app URL, auth credentials, project path).</li>
-    <li>Start the Playwright MCP server: <code>npx @playwright/mcp@latest</code><br/>(or set <code>mcp.autoStart: true</code> in config — the orchestrator will launch it).</li>
+    <li><strong>(One-time)</strong> Install local packages: <code>cd mcp-config/autotestgen-mcp &amp;&amp; npm install</code>.<br/>This installs <code>playwright</code> and <code>@playwright/mcp</code> into <code>node_modules/</code>. No browser is downloaded — the pipeline uses your system Chrome or Edge.</li>
+    <li>Ensure <strong>Google Chrome</strong> or <strong>Microsoft Edge</strong> is installed on the machine. Chrome is used automatically; Edge is the fallback if Chrome is not found.</li>
     <li><strong>(Optional but recommended)</strong> Run the POM Locator Miner first if you have an existing test project: type <code>/utility-pom-locator-miner</code> in Copilot Chat.</li>
     <li>In Copilot Chat, open <code>orchestrator/master-orchestrator.prompt.md</code> and type <code>/master-orchestrator</code>.</li>
     <li>The orchestrator runs all 8 stages and produces a complete test project at your configured <code>project.existingProjectPath</code> or <code>project.newProjectPath</code>.</li>
@@ -757,8 +761,13 @@ ls -1t learning/locator-learning-*.json | tail -n +7 | \
       </tr>
       <tr>
         <td>"Playwright MCP server is not running"</td>
-        <td>MCP server not started</td>
-        <td>Run <code>npx @playwright/mcp@latest</code> in a terminal, or set <code>mcp.autoStart: true</code>.</td>
+        <td>MCP server not started or <code>npm install</code> not run</td>
+        <td>Run <code>cd mcp-config/autotestgen-mcp &amp;&amp; npm install</code> once. VS Code will auto-start the MCP server from local <code>node_modules/</code> when the chat session begins.</td>
+      </tr>
+      <tr>
+        <td>"Neither Google Chrome nor Microsoft Edge was found"</td>
+        <td>No supported browser installed</td>
+        <td>Install <a href="https://www.google.com/chrome/">Google Chrome</a> (preferred) or <a href="https://www.microsoft.com/edge">Microsoft Edge</a>. The pipeline never downloads Chromium.</td>
       </tr>
       <tr>
         <td>Stage 2 fails — login page not found</td>

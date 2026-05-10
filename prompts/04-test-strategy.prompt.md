@@ -29,12 +29,24 @@ any code is generated.
 
 Before doing any work, check `output/pipeline-state.json`:
 
-- If `stages.stage4.status` is `"completed"` → log `[STAGE 4] Already completed — skipping.` and exit immediately.
+- If `stages.stage4.status` is `"completed"` **AND** `pipeline.mode !== "single-route"` →
+  log `[STAGE 4] Already completed — skipping.` and exit immediately.
+- If `stages.stage4.status` is `"completed"` **AND** `pipeline.mode === "single-route"` →
+  do NOT exit. The prior completion was for a full run (or a different single-route target).
+  Continue below so this stage can merge test cases for the new single route.
+  Log `[STAGE 4] Prior full-run completion detected — re-entering for single-route: [pipeline.singleRoute].`
 - If `stages.stage4.pagesProcessed` exists and is non-empty → resume from where the previous run stopped (see Step 1).
   Log `[STAGE 4] Resuming — [N] pages already processed.`
 - Otherwise → start fresh.
 
 Set `stages.stage4.status` to `"in_progress"` in `pipeline-state.json` before continuing.
+
+**Single-route checkpoint:** After successfully processing the single route in this mode, set
+`stages.stage4.singleRouteCompleted` to the value of `pipeline.singleRoute` in addition to
+the normal per-page append to `stages.stage4.pagesProcessed`. Do NOT change
+`stages.stage4.status` to `"completed"` for a single-route run — leave it as `"in_progress"`
+until a subsequent full run finishes Stage 4 in full mode. This prevents a single-route
+checkpoint from masking unprocessed pages on the next full run.
 
 ---
 
@@ -47,7 +59,8 @@ context limits and cause the agent to stall. Instead, process the map one page a
 2. Check `pipeline-state.json → stages.stage4.pagesProcessed` (default: `[]`).
    Skip any pages already in that list (resume support).
 3. For each page NOT yet processed:
-   a. Read that page's full entry from `application-map.json`.
+   a. Load the page's full detail from `output/pages/<pageId>.json`
+      (the index in `output/application-map.json` provides the `pageId` for each route).
    b. Apply Heuristic Sets A–E and H (page-scoped) — see Step 2.
    c. Emit test cases for that page into `output/test-plan.json` (append-and-persist — see Step 4).
    d. Append the page's route to `stages.stage4.pagesProcessed` and persist `pipeline-state.json`.
@@ -129,15 +142,24 @@ For EVERY table discovered, generate:
 **B2 — Sorting**
 - Click each sortable column → verify sort order (ascending then descending)
 
-**B3 — Filtering**
-- Apply each filter option → verify results are filtered correctly
-- Apply multiple filters simultaneously
-- Clear all filters → verify full results return
+**B3 — Filtering (ONE SEPARATE TEST CASE PER DISTINCT FILTER OPTION VALUE — REQUIRED)**
 
-**B4 — Pagination**
-- Navigate to page 2 → verify different results
-- Navigate to last page → verify boundary behavior
-- Change page size (if configurable)
+For every filter with discrete option values discovered in the application map, generate:
+- ONE independent test case per distinct option value (e.g., if a region filter has APAC, CALA, EMEA, NA → that is FOUR separate test cases: TC-X-B3a, TC-X-B3b, TC-X-B3c, TC-X-B3d). Combining all filter values into a single test case is a coverage gap that will be flagged by Stage 8.
+- One combined test: apply two or more filter options simultaneously → verify combined result
+- One clear test: clear all filters → verify full result set returns
+
+> **ENFORCEMENT:** Before writing the test plan, verify that the number of filter test cases equals the number of distinct option values (from the application map's `options[]` or DOM-crawled filter values), plus 2 (combined + clear). If fewer, add the missing per-option test cases.
+
+**B4 — Pagination (SEPARATE TEST CASE PER NAVIGATION DIRECTION — REQUIRED)**
+
+Generate each of these as a separate, independently-runnable test case:
+- **TC-B4-NEXT:** Navigate to page 2 via the Next button → verify results differ from page 1
+- **TC-B4-PREV:** From page 2, click Previous → verify page 1 results restored
+- **TC-B4-LAST:** Click Last (or navigate to last page) → verify boundary (Next button disabled or last-page indicator shown)
+- **TC-B4-SIZE** *(only if page size is configurable):* Change page size → verify item count per page changes
+
+> **ENFORCEMENT:** All four (or three, if page size is not configurable) MUST be distinct test case IDs. Never combine "navigate to page 2 and then to last page" in a single test.
 
 **B5 — Empty State**
 - Apply filter that yields no results → verify empty state message is shown
@@ -258,6 +280,13 @@ first run only):
 **G3 — Logout**
 - Verify logout clears session and redirects to login page
 
+**G4 — Login Failure Cases (REQUIRED when `auth.type !== "none"`) — generate all three:**
+- **TC-G4a** — Submit the login form with a valid-format email but the WRONG password → verify an error message is displayed (e.g. "Invalid credentials", "Incorrect password"), the user remains on the login page, and the URL still contains the login path.
+- **TC-G4b** — Submit the login form with an EMPTY email AND empty password → verify required-field validation messages appear for both fields before any network request is made.
+- **TC-G4c** — Submit with a valid email but EMPTY password → verify a validation error or server error is shown and login does not succeed.
+
+> **ENFORCEMENT:** If `auth.type === "none"`, skip G4 entirely (same rule as E4/G). Otherwise, all three TC-G4 cases MUST appear in the test plan.
+
 ---
 
 ### HEURISTIC SET H — UI Library Specifics (Kendo UI / Angular Material)
@@ -267,6 +296,36 @@ For every field whose `uiLibrary` in the application map is `kendo` or
 rather than treating the control as a native `<select>` / `<input>`. Failing
 to do this is the single most common cause of generated specs silently
 selecting nothing and submitting an empty form.
+
+### HEURISTIC SET B7 — Charts & Visualizations (REQUIRED when charts are present)
+
+For every chart or visualization component discovered in the application map that has filter buttons/controls:
+
+**B7-SMOKE:** Navigate to the page → verify the chart element is visible and rendered (no JS errors)
+
+**B7-FILTER-N (one per distinct filter option — same rule as B3):** For EACH distinct filter option (e.g., each region toggle, each payment-mode button, each category chip):
+- Click that single filter option
+- Verify the chart data updates (chart title changes, a metric value changes, chart re-renders)
+- Click again to de-select / restore full data
+
+> **ENFORCEMENT:** If a chart has 4 filter options (APAC, CALA, EMEA, NA), the test plan MUST contain 4 separate B7-FILTER test cases. Grouping all filter options into one test is a coverage gap.
+
+**B7-EMPTY** *(optional, generate only if application map indicates an empty-state is possible):* Toggle all options off → verify chart shows empty/no-data state.
+
+---
+
+### HEURISTIC SET B8 — Export Actions (REQUIRED per export format)
+
+For every export button discovered in a table, grid, or page:
+
+**B8-N (one per export format):** Generate one test case PER export format (Excel, PDF, CSV are separate test cases — NOT combined):
+- Click the export button for that format
+- Verify a file download starts (check the `download` event fires and `suggestedFilename()` matches the expected extension)
+- Assert filename extension is correct (`.xlsx` for Excel, `.pdf` for PDF, `.csv` for CSV)
+
+> **ENFORCEMENT:** If a page has both "Export to Excel" and "Export to PDF" buttons, the test plan MUST contain two separate test cases.
+
+---
 
 **H1 — Library-Aware Field Driving**
 - Every test step that sets a value on a Kendo or Material control MUST
@@ -299,6 +358,48 @@ selecting nothing and submitting an empty form.
 
 ---
 
+---
+
+## Step 2.8 — Coverage Completeness Mandate (REQUIRED — run before writing test plan)
+
+Before emitting a single test case to `test-plan.json`, verify the following minimum requirements are met for the entire test plan being built. Any requirement below that is NOT met is a hard coverage gap — add the missing test cases now rather than relying on Stage 8 to detect them.
+
+**Every authenticated page MUST have:**
+1. At least 1 smoke test (E1 — direct navigation + load verification)
+2. Exactly 1 unauthenticated access test (E4) — unless `auth.type === "none"`
+3. At least 1 interaction test (form submit, row action, chart toggle, or filter)
+
+**Every form MUST have:**
+1. A happy-path submission test (A1)
+2. At least 1 required-field validation test (A2)
+3. A cancel / reset test (A6) — only if a Cancel/Reset button exists
+
+**Every table/grid with filter controls MUST have:**
+1. One separate test per distinct filter option value (B3 — not combined)
+2. Separate tests for Next, Previous, AND Last page navigation (B4)
+3. An empty state / no-results test (B5)
+4. A sort test that compares row ORDER (not just first row) (B2)
+
+**Every chart with filter options MUST have:**
+1. One separate test per distinct filter option value (B7-FILTER-N)
+
+**Every export button MUST have:**
+1. One download test per export format (B8 — Excel and PDF are separate)
+
+**The login page MUST have (when `auth.type !== "none"`):**
+1. Valid credentials happy path (G2)
+2. Wrong password failure test (G4a)
+3. Empty credentials validation test (G4b)
+
+> After checking each requirement, log the coverage status to the console:
+> ```
+> [STAGE 4] Coverage mandate check: pages=N, forms=M, grids=P, charts=Q, exports=R
+> [STAGE 4] Total required TCs: X | Generated: Y | Gaps found: Z
+> ```
+> If Z > 0, add the missing test cases before proceeding to Step 3.
+
+---
+
 ## Step 3 — Assign Test IDs, Modules, and Types
 
 For each generated test case:
@@ -311,23 +412,17 @@ For each generated test case:
 
 ---
 
-## Step 4 — Write Test Plan (Streaming / Append-and-Persist)
+## Step 4 — Write Test Plan (Streaming / Per-Page Files)
 
-**Fresh run — first page processed:** Initialize `output/test-plan.json` with the
-top-level schema shown below (`testCases: []` empty) before emitting any test cases.
+The test plan is split into two levels:
 
-**Each subsequent page (same run):** Append new test cases to the existing
-`testCases` array. Never re-write the whole file. Update `totalTestCases`,
-`summary.byType`, and `summary.byModule` counters after every append.
+- **`output/test-plan.json`** — lightweight INDEX only. Contains summary counters
+  and a `pages[]` array pointing to per-page test-case files. No `testCases[]`
+  array ever lives in this file — reading it is always fast regardless of app size.
+- **`output/test-cases/<pageId>.json`** — full test cases for exactly one page.
+  Written once per page, then extended on resume; never re-written from scratch.
 
-**Resume (file already exists from a prior partial run):** Do NOT re-initialize
-the file. Open the existing file, read which test-case IDs are already present,
-and append only the test cases for pages not yet processed. A duplicate test-case
-ID is a hard error — log it and stop rather than overwriting the existing entry.
-
-Schema (initialized once on a fresh run):
-
-Create `output/test-plan.json`:
+**Fresh run — first page processed:** Initialize `output/test-plan.json`:
 
 ```json
 {
@@ -337,6 +432,19 @@ Create `output/test-plan.json`:
     "byType": { "smoke": 0, "regression": 0, "e2e": 0 },
     "byModule": {}
   },
+  "pages": []
+}
+```
+Create the `output/test-cases/` directory if it does not exist.
+
+**Each page processed:** Write that page's test cases to
+`output/test-cases/<pageId>.json`:
+
+```json
+{
+  "pageId": "P-001",
+  "url": "/requests/create",
+  "generatedAt": "[ISO timestamp]",
   "testCases": [
     {
       "id": "TC-REQ-001",
@@ -373,6 +481,19 @@ Create `output/test-plan.json`:
   ]
 }
 ```
+
+Then append/update the page's index entry in `output/test-plan.json → pages[]`:
+
+```json
+{ "pageId": "P-001", "url": "/requests/create", "module": "Requests",
+  "testCasesFile": "output/test-cases/P-001.json", "testCaseCount": 12 }
+```
+
+Update `totalTestCases`, `summary.byType`, and `summary.byModule` counters.
+
+**Resume (prior partial run):** Do NOT re-initialize either file. Check which
+`output/test-cases/<pageId>.json` files already exist. Skip those pages.
+A duplicate test-case ID across any per-page file is a hard error — log and stop.
 
 Every test case MUST include `artifactRequirements` (see Step 6 below) so
 the four-artifact contract — enforced by the master orchestrator — has the
@@ -455,8 +576,9 @@ Stage 4 MUST:
 1. Read the existing `output/test-plan.json` if it exists.
 2. Generate test cases **only** for the page at `pipeline.singleRoute` and
    for any modal / journey directly opened from that page.
-3. Replace any prior test cases whose `page` field equals the single
-   route; leave all other test cases untouched.
+3. Write/overwrite `output/test-cases/<pageId>.json` for the single route's
+   page only; leave all other `output/test-cases/` files untouched.
+   Update the corresponding index entry in `output/test-plan.json → pages[]`.
 4. Set `pipeline-state.json` → `stage4.status` to `"completed"` with a
    `singleRouteCompleted` annotation, not a fresh full-app completion.
 
@@ -482,7 +604,8 @@ Total Test Cases:     [count]
   - E2E:              [count]
 Library-Aware Tests:  [count]   # cases driving Kendo / Material controls
 Needs-Review Cases:   [count]   # cases with incomplete artifactRequirements
-Test Plan:            output/test-plan.json [SAVED]
+Test Plan Index:      output/test-plan.json [SAVED]
+Test Case Files:      output/test-cases/ ([count] files)
 
 *** HUMAN REVIEW REQUIRED ***
 Please review output/test-plan.json before proceeding.

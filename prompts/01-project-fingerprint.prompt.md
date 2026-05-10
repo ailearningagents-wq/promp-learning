@@ -46,6 +46,36 @@ Exit immediately. Do NOT proceed to Step 1.
 
 ---
 
+## Preferred path — `mcp_fingerprint_project` + LLM completion
+
+When the `autotestgen` MCP server is registered, replace Steps 1–4 with one
+call that handles all deterministic detection (framework, language, folders,
+naming conventions, import style):
+
+```jsonc
+mcp_fingerprint_project({
+  "projectPath": "<resolved config.project.existingProjectPath>"
+})
+```
+
+The tool returns a partial fingerprint with `techStack`, `language`,
+`testRunner`, `importStyle`, `folders`, and `conventions` already populated.
+After calling the tool:
+
+1. Review `ambiguities[]` in the response — any folder category listed there
+   (e.g. `"specs"`, `"data"`) was not auto-detected and must be resolved
+   manually via Steps 3–4 below.
+2. Proceed directly to **Step 5** (code style sampling) and **Step 6** (auth
+   pattern detection) — these still require reading actual project files and
+   cannot be automated.
+3. Merge the tool result with the Step 5–6 data, then continue to **Step 7**
+   (write `project-fingerprint.json`).
+
+Steps 1–4 below remain as the **fallback** for environments where the server
+is not registered or for resolving any ambiguities the tool flags.
+
+---
+
 ## Step 1 — Framework Detection
 
 Navigate to `config.project.existingProjectPath` and examine:

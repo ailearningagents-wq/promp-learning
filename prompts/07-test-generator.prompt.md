@@ -37,17 +37,35 @@ Tests are organized by module and type, matching the existing project structure 
 This stage MUST stream spec-file by spec-file rather than buffering every
 generated test in memory.
 
+**Per-route-loop override (check FIRST, before all other mode logic):**
+Read `output/pipeline-state.json → pipeline.codegenMode`. If it equals
+`"per-route-loop"`, treat this invocation exactly like `single-route` mode:
+- Effective single route = `pipeline-state.json → pipeline.codegenRoute`.
+- Do NOT read `config.pipeline.mode` or `config.pipeline.singleRoute` for
+  routing decisions in this invocation — `codegenRoute` is the authority.
+- Apply all single-route rules below (step 3) using `codegenRoute` as the
+  route value. Do NOT set `singleRouteCompleted` — the orchestrator manages
+  per-route progress via `perRouteCodegen.routesCompleted`.
+- **Fixture rule in loop mode:** create the auth fixture file only if it does
+  not already exist on disk. Never re-generate or overwrite an existing fixture.
+- Log: `[STAGE 7] Per-route-loop mode — generating specs for route: [codegenRoute]`
+
 1. After each spec file is written or extended, update
    `pipeline-state.json` → `stage7.specFilesCompleted` and persist before
    advancing to the next spec file.
 2. **Resume:** on startup, read `pipeline-state.json`. Skip any spec file
    already in `stage7.specFilesCompleted` whose file exists on disk and
    contains the expected test IDs.
-3. **Single-route mode:** if `pipeline.mode === "single-route"`, the spec
-   files to generate / extend are exactly the unique
-   `artifactRequirements.specFile` values across test cases whose `page`
-   matches `pipeline.singleRoute`. All other spec files are left
-   untouched.
+3. **Single-route mode:** if `pipeline.mode === "single-route"` (or the
+   per-route-loop override above is active), the spec files to generate /
+   extend are exactly the unique `artifactRequirements.specFile` values
+   across test cases whose `page` matches the configured route. All other
+   spec files are left untouched.
+   After writing or extending the last single-route spec file (non-loop
+   single-route only), set `stages.stage7.singleRouteCompleted` to the value
+   of `pipeline.singleRoute` in `pipeline-state.json`. Do **not** set
+   `stages.stage7.status` to `"completed"` — leave it as `"in_progress"` so
+   a subsequent full run knows Stage 7 has not generated specs for all routes.
 4. The **fixture artifact** (Step 3 + Step 3a below) is project-scoped,
    not per-test. It is created once and reused; in single-route mode it
    is created only if missing — never replaced.
@@ -61,7 +79,8 @@ this can exhaust context before a single spec file is written. Instead, make
 **one** streaming pass that produces three derived structures the rest of the
 stage will consume — never re-open `test-plan.json` again after this step:
 
-1. Read `output/test-plan.json` once and, while iterating its `testCases[]`,
+1. Read `output/test-plan.json` (the index) once and iterate its `pages[]`.
+   For each page, load `output/test-cases/<pageId>.json` one at a time and
    extract per-case ONLY these fields (drop everything else immediately):
    - `id`
    - `page`
@@ -70,6 +89,9 @@ stage will consume — never re-open `test-plan.json` again after this step:
    - `artifactRequirements.fixture`
    - `artifactRequirements.pageClass`
    - `artifactRequirements.dataFile`
+
+   Release `output/test-cases/<pageId>.json` from memory after extracting
+   these fields. Never hold more than one per-page file in context at a time.
 
 2. From those fields, build three in-memory derived structures:
 
@@ -88,10 +110,11 @@ stage will consume — never re-open `test-plan.json` again after this step:
    Filter `specFileMap` to remove already-completed entries (resume support).
 
 4. For **each spec file** still in the filtered `specFileMap`:
-   a. Read only the test cases whose `id` is in `specFileMap[specFile]`
-      (lookup by id from `contractIndex`; selectively re-read those cases'
-      `steps[]`, `testDataRequirements`, `expectedResult`, `relatedElements`
-      from `test-plan.json`).
+   a. Re-load `output/test-cases/<pageId>.json` for each page whose cases
+      are in `specFileMap[specFile]` (derive `pageId` from `contractIndex`).
+      Selectively re-read those cases' `steps[]`, `testDataRequirements`,
+      `expectedResult`, `relatedElements` from the per-page file.
+      Release each file immediately after generating its spec.
    b. Generate the spec file from those test cases (Steps 3–4 below).
    c. Write the file to disk.
    d. Append the spec file path to `stages.stage7.specFilesCompleted` and
@@ -596,7 +619,159 @@ Playwright projects.
 
 ---
 
-## Step 5 — Merge Strategy (Existing Projects)
+## Step 4a — Test Robustness Rules (REQUIRED — apply to every generated test)
+
+These rules fix the most common categories of generated tests that compile
+correctly but fail at runtime. Apply them mechanically to every test body
+before writing the file.
+
+### Rule R1 — Download Events: Promise.all BEFORE click (CRITICAL)
+
+**WRONG** — registers listener after click; download fires before listener attaches:
+```javascript
+// THIS WILL TIME OUT — never write this pattern
+await page.click('#exportButton');
+const download = await page.waitForEvent('download'); // race condition
+```
+
+**CORRECT** — always register the download listener before the click:
+```javascript
+const [download] = await Promise.all([
+  page.waitForEvent('download'),  // registered first
+  exportButton.click(),           // then click
+]);
+expect(download.suggestedFilename()).toMatch(/\.xlsx?$/i);
+```
+This applies to every download test regardless of framework or app. The
+POM's download helper (`clickAndDownload`) should use this pattern.
+
+### Rule R2 — Kendo/Material Visibility: Assert Wrapper, Not Hidden Input
+
+After a `navigate()` or tab-switch, never assert `toBeVisible()` on a Kendo
+or Material native hidden element (e.g., `#Communication`,
+`input[data-role="switch"]`). These are `display:none` by design. Assert
+the **visible wrapper** instead:
+
+```javascript
+// WRONG — hidden input, always fails toBeVisible()
+await expect(page.locator('#Communication')).toBeVisible();
+
+// CORRECT — the visible Kendo switch wrapper
+await expect(page.locator('.k-switch').filter({ has: page.locator('#Communication') })).toBeVisible();
+// OR if the POM exposes a wrapper locator:
+await expect(settingsPage.communicationSwitch).toBeVisible();
+```
+
+### Rule R3 — Search / Filter Debounce: Wait After Fill
+
+After calling `.fill()` on a search input that triggers a debounced
+live-filter (Kendo grid search, custom listview filter, etc.), always add
+a brief wait before asserting on the filtered results:
+
+```javascript
+// WRONG — asserts before debounce fires
+await searchInput.fill('nonexistent');
+expect(await grid.isGridEmpty()).toBe(true); // false because grid hasn't updated yet
+
+// CORRECT — wait for the debounce + XHR
+await searchInput.fill('nonexistent');
+await page.waitForTimeout(600); // debounce buffer (300–500ms common in Kendo)
+// Then optionally wait for network to settle:
+await page.waitForLoadState('domcontentloaded');
+expect(await grid.isGridEmpty()).toBe(true);
+```
+
+### Rule R4 — Sort Tests: Compare Row Order, Not Just First Row
+
+Sorting often leaves the same record at position 0 in both ascending and
+descending order (e.g., if the first record alphabetically = "A..." is also
+the last when reversed AND the grid only shows one page of results). Always
+capture at least **two** rows and compare their relative order:
+
+```javascript
+// WRONG — may fail if same record is extreme in both directions
+const firstRowAsc = await grid.getFirstRowText();
+await grid.sortByColumn('Name');
+const firstRowDesc = await grid.getFirstRowText();
+expect(firstRowAsc).not.toBe(firstRowDesc); // can be same!
+
+// CORRECT — compare a snapshot of N rows between sort directions
+await grid.sortByColumn('Name'); // ascending
+const rowsAsc = await gridRows.allTextContents();
+
+await grid.sortByColumn('Name'); // descending
+const rowsDesc = await gridRows.allTextContents();
+
+// Rows should be in reversed order (or at least differ in position)
+expect(rowsAsc[0]).toBe(rowsDesc[rowsDesc.length - 1]); // first asc = last desc
+// Or simpler: verify full arrays differ
+expect(rowsAsc.join('|')).not.toBe(rowsDesc.join('|'));
+```
+
+### Rule R5 — Form Dirty State: Use fillKendoInput, Not .fill()
+
+When a test needs to enable a Save or Cancel button that is guarded by
+Kendo MVVM dirty-detection, do NOT use raw `.fill()`. The POM method must
+use `fillKendoInput()` (which dispatches `input` + `change` events):
+
+```javascript
+// WRONG in POM method:
+await this.nicknameInput.fill(value); // Kendo MVVM may not detect this
+
+// CORRECT in POM method:
+await this.fillKendoInput(this.nicknameInput, value); // dispatches input + change events
+```
+If the POM's `fillAccountForm()` / `fillBillingForm()` does not use
+`fillKendoInput`, the Cancel button will remain disabled and the test
+will time out.
+
+### Rule R6 — Never Use `|| true` as an Assertion Fallback
+
+A test that always passes regardless of application state provides zero
+value and hides regressions. Every assertion must be capable of failing:
+
+```javascript
+// WRONG — always passes, test is useless
+expect(urlChanged || modalVisible || true).toBe(true);
+
+// CORRECT — pick the most likely post-action state and assert it specifically
+// If the action navigates: assert URL changed
+await page.waitForURL('**/products/**', { timeout: 5000 }).catch(() => {});
+expect(page.url()).not.toContain('/Products'); // URL changed
+
+// If the action opens a modal: assert modal is visible with specific title
+await expect(page.locator('[role="dialog"]')).toBeVisible();
+```
+
+### Rule R7 — Unauthenticated Tests: Use `waitForLoadState('domcontentloaded')`
+
+Unauthenticated navigation tests (auth-boundary tests using `{ browser }`)
+must NOT call `waitForPageLoad()` (which uses `load` or `networkidle`) after
+`goto()`. The redirect to login may happen before full page load. Instead:
+
+```javascript
+// CORRECT pattern for unauthenticated redirect tests
+const context = await browser.newContext(); // no storageState
+const page = await context.newPage();
+await page.goto(protectedUrl, { waitUntil: 'domcontentloaded' });
+await page.waitForURL('**/Login**', { timeout: 10000 });
+expect(page.url()).toContain('Login');
+await context.close();
+```
+
+### Rule R8 — Filter Tests: One Test Per Distinct Filter Option
+
+When a page has a filter with N discrete options (checkboxes, buttons, select),
+generate **N separate test cases** — one per option — not a single test that
+loops through all options. Each test independently toggles one option and
+verifies the chart/grid updates. This is required for B3 and B7 coverage.
+
+### Rule R9 — Never Assert Visibility on `type="hidden"` or `display:none` Elements
+
+Before emitting a `toBeVisible()` assertion in any spec file, verify the
+target locator is not a native Kendo/Material hidden form field. If the
+locator targets `#SomeId` and the application map shows `uiLibrary: "kendo"`
+for that field, use the wrapper locator from Rule R2 instead.
 
 For each spec file to be created:
 

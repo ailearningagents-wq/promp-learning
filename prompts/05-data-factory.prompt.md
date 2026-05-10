@@ -40,39 +40,77 @@ This stage MUST stream module-by-module rather than loading every form's
 data variants in memory and writing at the end (see master orchestrator
 → Cross-Cutting Rules).
 
+**Per-route-loop override (check FIRST, before all other mode logic):**
+Read `output/pipeline-state.json → pipeline.codegenMode`. If it equals
+`"per-route-loop"`, treat this invocation exactly like `single-route` mode:
+- Effective single route = `pipeline-state.json → pipeline.codegenRoute`.
+- Do NOT read `config.pipeline.mode` or `config.pipeline.singleRoute` for
+  routing decisions in this invocation — `codegenRoute` is the authority.
+- Apply all single-route rules below (step 3) using `codegenRoute` as the
+  route value. Do NOT set `singleRouteCompleted` — the orchestrator manages
+  per-route progress via `perRouteCodegen.routesCompleted`.
+- Log: `[STAGE 5] Per-route-loop mode — generating for route: [codegenRoute]`
+
 1. After each module's data factory file is written, update
    `pipeline-state.json` → `stage5.modulesCompleted` and persist the file
    before advancing to the next module.
 2. **Resume:** on startup, read `pipeline-state.json`. Skip any module
    already in `stage5.modulesCompleted`. Only re-process a module if its
    data file is missing or invalid.
-3. **Single-route mode:** if `pipeline.mode === "single-route"`, only
-   generate / extend the data factory file for the module that contains
-   the configured `pipeline.singleRoute`. All other modules' factories are
-   left untouched. The set of factory files to touch is determined by
-   collecting each test case in `test-plan.json` whose `page` matches the
-   single route, then taking the unique set of
+3. **Single-route mode:** if `pipeline.mode === "single-route"` (or the
+   per-route-loop override above is active), only generate / extend the data
+   factory file for the module that contains the configured route. All other
+   modules' factories are left untouched. The set of factory files to touch
+   is determined by collecting each test case in `test-plan.json` whose
+   `page` matches the route, then taking the unique set of
    `artifactRequirements.dataFile` values.
+   After writing the factory file (non-loop single-route only), set
+   `stages.stage5.singleRouteCompleted` to the value of `pipeline.singleRoute`
+   in `pipeline-state.json`. Do **not** set `stages.stage5.status` to
+   `"completed"` — leave it as `"in_progress"` so a subsequent full run
+   knows Stage 5 has not processed all modules.
 
 ---
 
 ## Step 1 — Read Inputs
 
-**Do NOT read `output/application-map.json` in full.** For a large application,
-the full map can be megabytes of JSON and will exhaust context before a single
-factory file is generated. Instead:
-1. Read `output/application-map.json` and extract only the **top-level page
-   list** (page routes / IDs) — not each page's form fields.
-2. Form-field data for each page is loaded on-demand inside Step 3's streaming
-   loop, one page at a time, when it is actually needed to generate that page's
-   factory variants.
+**Preferred path — `mcp_build_data_index` call:**
 
-**Do NOT read `output/test-plan.json` in full.** When building the index,
-read only the `artifactRequirements.dataFile` and `testDataRequirements`
-fields from each test case. Skip `steps[]`, `preconditions`,
+When the `autotestgen` MCP server is registered, replace the test-plan I/O
+below with one call that reads the index and all per-page test-case files
+and returns the `dataFile → testCases[]` map directly:
+
+```jsonc
+mcp_build_data_index({
+  "testPlanFile":  "output/test-plan.json",
+  "workspaceRoot": "<absolute path to workspace root>"
+})
+```
+
+Returns `{ dataIndex, uniqueDataFiles, totalDataFiles, pageIds, totalPages }`.
+`dataIndex` is the `dataFile → [{ tcId, pageId, url, testDataRequirements }]`
+map Step 3 needs — no further file reads required for building the factory
+index. Skip to **Determine language and folder structure** below after the
+call. The fallback loading instructions below apply when the server is not
+available.
+
+---
+
+**Application map — index-first loading.** Read `output/application-map.json`
+to obtain the **page index** (`pageId`, `url`, `title`, `module`, `role`, `status`
+for each page). Do NOT attempt to read full DOM detail from this file — it is
+an index only. When form-field or interaction detail is needed for a specific
+page, load `output/pages/<pageId>.json` on demand inside Step 3's streaming
+loop, one page at a time.
+
+**Test plan — index-first loading (fallback).** Read `output/test-plan.json` to obtain
+the **page index** (`pageId`, `url`, `module`, `testCasesFile`, `testCaseCount`
+for each page). Do NOT read all per-page test-case files upfront. When building
+the data factory index for a page, load `output/test-cases/<pageId>.json` on
+demand and extract only `artifactRequirements.dataFile` and
+`testDataRequirements` from each test case. Skip `steps[]`, `preconditions`,
 `relatedElements`, `expectedResult`, and all other fields — they are not
-needed by this stage and loading them wastes significant context on large
-test plans.
+needed by this stage and loading them wastes significant context on large apps.
 
 Build a `dataFile → testCases[]` index from each test case's
 `artifactRequirements.dataFile`. The list of factory files this stage must

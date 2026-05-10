@@ -1,5 +1,5 @@
 ---
-mode: agent
+agent: agent
 description: >
   MASTER ORCHESTRATOR — Automated Multi-Framework Test Generation System.
   Runs all 8 pipeline stages in sequence to generate a complete, production-quality
@@ -52,35 +52,21 @@ If `pipeline.config.json` is missing entirely:
 
 ### 1. Load `.env` into memory (in-memory only — never write back)
 
-`pipeline.config.json` contains `$VAR_NAME` placeholders. The orchestrator
-resolves them from the `.env` file at the path in `pipeline.envFile`
-(default `.env`). **Resolved values stay in memory only**; secrets are
-never written to `pipeline.config.json`, `pipeline-state.json`, the
-`output/` folder, or any other file on disk.
+`pipeline.config.json` contains `$VAR_NAME` placeholders. Resolve them from the `.env` file. **Resolved values stay in memory only**; secrets are never written to any file on disk.
 
 Procedure:
 
-1. Read `pipeline.config.json` raw (as JSON-with-tokens).
-2. Read `.env` and parse it into a key→value map (`KEY=value`, ignore
-   blank lines and `#` comments).
-3. Build the resolved config in memory: walk every string field in
-   `pipeline.config.json`; if it equals `"$VAR_NAME"`, substitute the
-   value from the `.env` map.
-4. **Only resolve if not already resolved** — if a field already holds a
-   non-`$`-prefixed value, leave it alone (the user may have hand-edited).
-5. Track unresolved tokens. If any required tokens are unresolved (see
-   "Required" list below), stop and list them:
+1. **Validate file existence:** Check that both `pipeline.config.json` and the `.env` file exist. If either is missing, stop and report which file is absent.
+2. **Parse files:** Read `pipeline.config.json` as JSON-with-tokens. Parse `.env` into a key→value map (ignore blank lines and `#` comments).
+3. **Resolve tokens:** Walk every string field in `pipeline.config.json`; if it equals `"$VAR_NAME"`, substitute the value from the `.env` map. Only resolve `$`-prefixed values — leave hand-edited fields untouched.
+4. **Validate resolved tokens:** Check that all required tokens resolved to non-empty strings (see list below). If any are missing, stop and list them:
    ```
    The following .env values are missing or empty:
      - APP_USERNAME
      - OIDC_CLIENT_ID
    Please populate them in .env and re-run.
    ```
-6. Hand the resolved-in-memory config to all downstream stages by writing
-   it to a per-process variable, never to disk. Stages that need
-   non-secret values (e.g., `application.baseUrl`) can read directly
-   from `pipeline.config.json`; stages that need secrets receive them
-   only via tool inputs the orchestrator constructs.
+5. **Hold in memory:** Pass the resolved config to downstream stages via tool inputs only. Never write secrets to disk.
 
 **Required tokens** (must resolve to non-empty strings):
 `PROJECT_MODE`, `APP_BASE_URL`, `AUTH_TYPE`, `APP_USERNAME`,
@@ -104,40 +90,57 @@ Procedure:
   This value governs how many locator-learning scan files Stage 3 reads
   and how many the locator miner utility retains in INDEX.json.
 
-### 3. Ensure local Playwright MCP server is running
+### 3. Ensure MCP servers are running
 
-The pipeline drives the browser via the Playwright MCP server defined in
-`mcp-config/mcp.json`. If that server is not reachable, Stage 2 (auth) and
-Stage 3 (crawl) will fail.
+The pipeline now uses **two** MCP servers (both registered in
+`mcp-config/mcp.json`):
+
+| Server         | Used by                                            | Required?               |
+|----------------|----------------------------------------------------|-------------------------|
+| `playwright`   | Fallback browser primitives in any stage           | Always                  |
+| `autotestgen`  | `mcp_oidc_login`, `mcp_save_storage_state`, `mcp_capture_page_dom`, `mcp_extract_routes`, `mcp_probe_conditional`, `mcp_pom_mine_locators` | Strongly recommended — cuts token use ~85% in Stages 2/3 and the miner |
+
+If `autotestgen` is not registered, every stage falls back to its manual
+primitive path. The pipeline still works; it just costs more tokens and is
+more brittle under session limits.
 
 Procedure:
 
 1. **Default `pipeline.mcp` when absent:** If the `mcp` key is entirely absent
    from `pipeline.config.json`, treat `pipeline.mcp.autoStart` as `true` and log:
    `[PRE-FLIGHT] pipeline.mcp not configured — defaulting to autoStart=true.`
-   This prevents a silent skip of the MCP readiness check when the user has not
-   added the `mcp` section to their config.
 
-2. Probe whether the Playwright MCP server is running:
+2. Probe both servers:
    ```bash
-   pgrep -f "@playwright/mcp" >/dev/null 2>&1 && echo "running" || echo "stopped"
+   pgrep -f "@playwright/mcp"     >/dev/null 2>&1 && echo "playwright:running"    || echo "playwright:stopped"
+   pgrep -f "autotestgen-mcp"     >/dev/null 2>&1 && echo "autotestgen:running"   || echo "autotestgen:stopped"
    ```
-3. If `stopped` AND `pipeline.mcp.autoStart === true`:
-   - Read the command + args from `mcp-config/mcp.json` (default:
-     `npx @playwright/mcp@latest`).
-   - Launch it as a detached background process:
+
+3. If `playwright` is `stopped` AND `pipeline.mcp.autoStart === true`:
+   - Launch as a detached background process:
      ```bash
      mkdir -p output/logs
-     nohup npx @playwright/mcp@latest \
-       > output/logs/mcp-server.log 2>&1 &
+     nohup npx @playwright/mcp@latest > output/logs/mcp-playwright.log 2>&1 &
      ```
-   - Wait up to **60 seconds** for it to come up, re-probing every 10 seconds
-     (up to 6 attempts). On cold-start npm downloads, 15 seconds is too short.
-     Log each probe: `[PRE-FLIGHT] MCP probe [N/6]...`
-   - On failure after 60 seconds, stop and ask the user to start it manually.
-4. If `stopped` AND `pipeline.mcp.autoStart === false`:
-   > "Playwright MCP server is not running. Start it with: `npx @playwright/mcp@latest` and re-run."
-5. Log: `MCP server: [running | started | failed]`.
+   - Wait up to **60 seconds** (re-probe every 10s). Log each probe.
+   - On failure after 60 seconds, stop and ask the user to start manually.
+
+4. If `autotestgen` is `stopped` AND `pipeline.mcp.autoStart === true`:
+   - Launch from the workspace-local path (no npm registry hit):
+     ```bash
+     mkdir -p output/logs
+     nohup node ./mcp-config/autotestgen-mcp/src/index.js > output/logs/mcp-autotestgen.log 2>&1 &
+     ```
+   - First-time setup: if `mcp-config/autotestgen-mcp/node_modules/playwright` does
+     NOT exist, instruct the user to run:
+     > "First-time setup: cd mcp-config/autotestgen-mcp && npm install"
+     …then stop and let them run it.
+   - Wait up to **30 seconds** for it to come up.
+
+5. If either server is `stopped` AND `pipeline.mcp.autoStart === false`:
+   > "MCP server [name] is not running. Start it from the VS Code MCP panel or run the command in `mcp-config/mcp.json` manually, then re-run."
+
+6. Log: `MCP servers: playwright=[…], autotestgen=[…]`.
 
 ### 4. Resolve project paths (existing → verify; new → prompt)
 
@@ -180,8 +183,14 @@ When `pipeline.mode === "single-route"`, the orchestrator MUST:
    Validity is defined per stage — never re-auth unnecessarily, but never
    trust a stale artifact either:
    - **Stage 0 valid:** `output/pipeline-state.json` exists, parses as JSON,
-     contains a `pipeline.mode` matching the current run's mode, and
-     `stages.stage0.status === "completed"`.
+     `stages.stage0.status === "completed"`, and `pipeline.mode` matches the
+     current run's mode (from `pipeline.config.json`).
+     If `pipeline.mode` does NOT match (e.g., switching from `"full"` to
+     `"single-route"`), Stage 0 is **invalid** and must re-run. During that
+     re-run, Stage 0 updates `pipeline.mode`, `pipeline.singleRoute`, and
+     `pipeline.lastUpdated` in the existing state file — it does NOT reset
+     stage statuses or counters (see `prompts/00-input-collection.prompt.md`
+     → Step 2).
    - **Stage 1 valid:** `config.project.mode === "new"` (Stage 1 was
      correctly skipped) OR `output/project-fingerprint.json` exists, parses
      as JSON, and contains a non-null `framework`.
@@ -222,7 +231,14 @@ updates this file):**
   "pipeline": {
     "mode": "full | single-route",
     "singleRoute": null,
-    "lastUpdated": "[ISO timestamp]"
+    "lastUpdated": "[ISO timestamp]",
+    "codegenMode": "per-route-loop | single-route | null",
+    "codegenRoute": "/current/route/being/generated | null"
+  },
+  "perRouteCodegen": {
+    "routesQueued": ["..."],
+    "routesCompleted": ["..."],
+    "lastRouteStarted": "/last/route/started | null"
   },
   "stages": {
     "stage0": { "status": "completed", "lastCompletedAt": "..." },
@@ -279,6 +295,37 @@ can re-invoke the orchestrator and it will pick up at the failed stage.
 The following rules are global. Each stage prompt restates them where it
 matters; the orchestrator is the source of truth.
 
+### Pipeline-State Checkpoints — preferred `mcp_state_checkpoint` call
+
+Every stage that writes to `output/pipeline-state.json` SHOULD use
+`mcp_state_checkpoint` instead of the read → edit → write_file sequence,
+when the `autotestgen` MCP server is registered:
+
+```jsonc
+// Example: mark Stage 3 per-page checkpoint
+mcp_state_checkpoint({
+  "stateFilePath": "output/pipeline-state.json",
+  "stageKey": "stage3",
+  "fields": {
+    "lastCompletedRoute": "/requests/create",
+    "routesCompleted": ["/dashboard", "/requests/create"]
+  }
+})
+
+// Example: mark stage completed + update counter
+mcp_state_checkpoint({
+  "stateFilePath": "output/pipeline-state.json",
+  "stageKey": "stage4",
+  "fields": { "status": "completed", "pagesProcessed": [...] },
+  "topLevel": { "counters.testCasesGenerated": 47 }
+})
+```
+
+The tool does one atomic read-merge-write with no risk of partial writes or
+stale data from a prior read. Apply it at every per-page iteration AND at
+every stage completion step. The fallback (read_file + create_file) is used
+only when the MCP server is not available.
+
 ### Streaming / Page-Wise Execution (REQUIRED)
 
 No stage may buffer the entire application's DOM, test plan, POM set, or
@@ -322,21 +369,19 @@ prevent.
 ### Four-Artifact Contract (REQUIRED for every test project)
 
 Every test project the pipeline creates **or modifies** MUST end up with
-all four of the following artifact categories present and consistent. The
-contract is enforced **at the orchestrator** by verifying outputs after
-Stage 7; the individual stages are responsible for producing each piece.
+all four artifact categories present and consistent. Use the checklist
+below to verify compliance after Stage 7, one row at a time:
 
-| Artifact            | Owning stage | What it contains                                                    |
-|---------------------|--------------|---------------------------------------------------------------------|
-| Fixture classes     | Stage 7 (+ Stage 2 auth stub) | Auth fixture / `BaseTest` / `AuthHelper` wiring driver+auth+POM+data per test |
-| Page classes        | Stage 6      | One POM per page in `application-map.json`, library-aware locators |
-| JSON data files     | Stage 5      | Per-form / per-module data variants referenced by spec data imports |
-| Spec (test) classes | Stage 7      | Actual `test(...)` blocks, organised by module + type               |
+| # | Artifact | Owning stage | Verify |
+|---|----------|--------------|--------|
+| 1 | **Fixture classes** | Stage 7 (+ Stage 2 auth stub) | File exists at `artifactRequirements.fixture` path |
+| 2 | **Page classes** | Stage 6 | File exists at `artifactRequirements.pageClass` path in project's pages folder |
+| 3 | **JSON data files** | Stage 5 | File exists at `artifactRequirements.dataFile` path in project's data folder |
+| 4 | **Spec (test) classes** | Stage 7 | File exists at `artifactRequirements.specFile` path AND contains at least one test block whose name includes the test case `id` |
 
-For every test case in `output/test-plan.json`, the orchestrator MUST
-verify after Stage 7 that all four artifacts named in the test case's
-`artifactRequirements` block exist on disk. If any are missing, log a
-`CONTRACT VIOLATION` line and stop the pipeline before Stage 8.
+For every test case in `output/test-plan.json`, check all four rows. Log a
+`CONTRACT VIOLATION` for each missing artifact and stop before Stage 8 if
+any violation is found.
 
 In single-route mode, the contract applies only to artifacts touching that
 route — the rest of the project is left untouched.
@@ -378,6 +423,10 @@ Read and execute the Stage 2 prompt. This stage:
 - Saves authenticated state to `output/auth/storageState.json`
 
 **CRITICAL:** If this stage fails, **STOP THE ENTIRE PIPELINE**. All subsequent stages depend on authenticated access.
+
+> **Non-standard auth (MFA / SAML):** If Stage 2 detects a multi-factor authentication prompt or a SAML redirect that cannot be completed automatically, it will stop and display:
+> `"MFA or SAML challenge detected. Use a service account without MFA, configure a bypass policy, or manually complete the auth flow and export the storageState.json, then resume the pipeline."`
+> The pipeline must not attempt to automate MFA input.
 
 ---
 
@@ -452,60 +501,137 @@ must be true:
 
 ---
 
-### STAGE 5 — Test Data Factory Generation
+### STAGES 5–7 — Per-Route Code Generation Loop
+
+> **Architecture note:** Stages 3 and 4 run once across the whole application
+> so that cross-page user journeys, shared POM abstractions, and E2E data
+> flows are discovered with full context. Stages 5, 6, and 7 are pure code
+> generation — they do not need cross-page reasoning. They therefore run
+> **one route at a time**, keeping only one route's test cases, form fields,
+> and generated files in context at once. This is the mechanism that makes
+> the pipeline viable for applications with 50+ pages.
+>
+> This loop applies only when `config.pipeline.mode === "full"`. When
+> `config.pipeline.mode === "single-route"`, skip the loop and run Stages
+> 5, 6, 7 once for that single route as described in the "Pipeline Modes"
+> section above.
+
+#### Loop Initialization (run once, before iterating routes)
+
+1. Read `output/application-map.json` and collect every `pages[*].url`
+   into an ordered list called `allRoutes`. Do NOT load page detail — only
+   the `url` field from each page entry.
+
+2. Read `output/pipeline-state.json → perRouteCodegen.routesCompleted`
+   (default `[]`). Filter `allRoutes` to remove any route already in that
+   list — this is the resume set `pendingRoutes`.
+
+3. If `pendingRoutes` is empty, log:
+   `[ORCHESTRATOR] All routes already processed through Stages 5–7 — skipping loop.`
+   and proceed directly to the Four-Artifact Contract check below.
+
+4. Write to `pipeline-state.json`:
+   - `perRouteCodegen.routesQueued` = `allRoutes`
+   - `perRouteCodegen.lastRouteStarted` = null (will be updated per iteration)
+   Log: `[ORCHESTRATOR] Per-route codegen loop: [N] routes total, [M] pending.`
+
+#### Per-Route Iteration (repeat for each route in `pendingRoutes`)
+
+For each `route` in `pendingRoutes`, execute the following steps **in order
+before moving to the next route**:
+
+**Step A — Signal the current route to Stages 5–7**
+
+Write to `output/pipeline-state.json`:
+- `pipeline.codegenMode` = `"per-route-loop"`
+- `pipeline.codegenRoute` = `route`
+- `perRouteCodegen.lastRouteStarted` = `route`
+
+Persist before invoking any stage.
+
+Log: `[ORCHESTRATOR] ─── Route [i/N]: [route] ───`
+
+**Page data loading hint:** Stages 5, 6, and 7 resolve the `pageId` for this
+route by scanning `output/application-map.json` index entries (match on
+`url === codegenRoute`). They then load `output/pages/<pageId>.json` for full
+DOM detail and `output/test-cases/<pageId>.json` for test cases. No other
+index or per-page files are read during a per-route-loop invocation.
+
+**Step B — Run Stage 5 for this route**
+
 **Prompt file:** `prompts/05-data-factory.prompt.md`
 
-Read and execute the Stage 5 prompt. This stage produces the **JSON data
-files** artifact (one of the four required artifacts). It reads each test
-case's `artifactRequirements.dataFile` from the test plan to know exactly
-which factory files to create or extend, and uses the option labels
-captured by Stage 3 for Kendo / Material dropdown fields. In single-route
-mode, only factories for forms on the configured route are touched.
+Read and execute the Stage 5 prompt. Because `pipeline.codegenMode` is
+`"per-route-loop"`, Stage 5 will scope itself to `pipeline.codegenRoute`
+only (see override detection in that prompt). This generates or extends
+the data factory file for the module containing this route. All other
+factory files are left untouched.
 
----
+**Step C — Run Stage 6 for this route**
 
-### STAGE 6 — Page Object Model Generation
 **Prompt file:** `prompts/06-pom-generator.prompt.md`
 
-Read and execute the Stage 6 prompt. This stage produces the **page
-classes** artifact. POM action methods MUST implement the
-`interactionStrategy` captured in Stage 3 so Kendo / Material wrappers are
-driven correctly inside the POM (tests never see raw `.k-list-item` or
-`mat-option` selectors). In single-route mode, only the POM for the
-configured route is created or extended.
+Read and execute the Stage 6 prompt. Stage 6 creates or extends the POM
+for this route only. POM action methods MUST implement the
+`interactionStrategy` recorded in `application-map.json` for this page's
+fields (Kendo / Material wrappers are driven correctly inside the POM).
 
----
+**Step D — Run Stage 7 for this route**
 
-### STAGE 7 — Test File Generation
 **Prompt file:** `prompts/07-test-generator.prompt.md`
 
-Read and execute the Stage 7 prompt. This stage produces the **fixture
-classes** and **spec classes** artifacts (the remaining two of the four
-required artifacts). The fixture artifact wires auth + POM + data factories
-into a per-test setup (Playwright `fixtures.ts` / Selenium
-`BaseTest` + `AuthHelper`). Specs call POM methods only — they do not
-contain raw selectors or hardcoded data. In single-route mode, only spec
-files referenced by the route's test cases are created or extended.
+Read and execute the Stage 7 prompt. Stage 7 creates or extends the spec
+file(s) for test cases whose `page` matches this route. The auth fixture
+artifact is created only on the **first** route (when it does not yet
+exist on disk) — all subsequent routes reuse it without re-generating it.
 
-After Stage 7 completes, the orchestrator MUST verify the
-**Four-Artifact Contract** using these exact steps:
+**Step E — Mark route complete and advance**
 
-1. Read `output/test-plan.json` → iterate every entry in `testCases[]`.
-2. For each test case, resolve the four `artifactRequirements` paths to
-   absolute disk paths using the project path from the resolved config.
-3. Check disk existence for each:
-   - `fixture`: the fixture file must exist at the path Stage 7 recorded.
-   - `pageClass`: the POM file must exist in the project's pages folder.
-   - `dataFile`: the JSON data file must exist in the project's data folder.
-   - `specFile`: the spec file must exist in the project's specs folder AND
-     contain at least one test/it/`@Test`/`[Test]`/`[Fact]` block whose
-     name includes the test case's `id` field.
-4. For any test case with one or more missing artifacts, log a
-   `CONTRACT VIOLATION` line showing which sub-fields are missing.
-5. If ANY contract violation is found, set `stages.stage7.status` to
-   `"failed"` in `pipeline-state.json`, persist it, and stop the pipeline.
-   Do NOT proceed to Stage 8 until all violations are resolved.
-6. If all artifacts are present, log `Four-Artifact Contract: PASS` and continue.
+After Stage 7 succeeds for this route:
+1. Append `route` to `pipeline-state.json → perRouteCodegen.routesCompleted`.
+2. Clear `pipeline-state.json → pipeline.codegenRoute` (set to `null`).
+3. Persist `pipeline-state.json` before advancing to the next route.
+
+Log: `[ORCHESTRATOR] Route [route] — Stages 5/6/7 complete.`
+
+**On failure mid-loop:** if any of Steps B, C, or D fails for a given route,
+log the error, set `pipeline-state.json → pipeline.codegenMode` to `null`
+and `stages.stage7.status` to `"failed"`, persist, and stop. The route
+that failed is recorded in `perRouteCodegen.lastRouteStarted` but NOT added
+to `routesCompleted`. Re-invoking the orchestrator will resume from this
+route.
+
+#### Post-Loop: Four-Artifact Contract Check
+
+After all routes in `pendingRoutes` have been processed (or if the loop was
+skipped because all routes were already completed), clear the codegen signal:
+
+1. Write to `pipeline-state.json`:
+   - `pipeline.codegenMode` = `null`
+   - `pipeline.codegenRoute` = `null`
+   Persist.
+
+2. Verify the **Four-Artifact Contract** for every test case in
+   `output/test-plan.json` using these exact steps:
+   a. Read `output/test-plan.json` → iterate every entry in `testCases[]`.
+   b. For each test case, resolve the four `artifactRequirements` paths to
+      absolute disk paths using the project path from the resolved config.
+   c. Check disk existence for each:
+      - `fixture`: file must exist at the `artifactRequirements.fixture` path.
+      - `pageClass`: file must exist in the project's pages folder at the
+        `artifactRequirements.pageClass` path.
+      - `dataFile`: file must exist in the project's data folder at the
+        `artifactRequirements.dataFile` path.
+      - `specFile`: file must exist in the project's specs folder AND contain
+        at least one test/it/`@Test`/`[Test]`/`[Fact]` block whose name
+        includes the test case's `id` field.
+   d. For any test case with one or more missing artifacts, log a
+      `CONTRACT VIOLATION` line showing which sub-fields are missing.
+   e. If ANY contract violation is found, set `stages.stage7.status` to
+      `"failed"` in `pipeline-state.json`, persist, and stop. Do NOT proceed
+      to Stage 8 until all violations are resolved.
+   f. If all artifacts are present, log `Four-Artifact Contract: PASS`
+      and continue.
 
 ---
 
@@ -544,6 +670,8 @@ KEEP:
 DELETE:
   output/auth/                  (storageState.json + auth helpers)
   output/crawl/                 (per-page DOM artifacts, if any)
+  output/pages/                 (per-page detail files from Stage 3)
+  output/test-cases/            (per-page test-case files from Stage 4)
   output/logs/
   output/application-map.json
   output/test-plan.json
@@ -569,7 +697,10 @@ appended to, not replaced).
 
 ## Pipeline Completion Summary
 
-After all stages complete, produce a summary in this exact format:
+After all stages complete, produce a summary in this exact format.
+Note: counts (`Pages Discovered`, `Forms Discovered`, etc.) are read from
+`pipeline-state.json → counters`, which stages update incrementally per
+item — no stage buffers the full dataset to produce these totals.
 
 ```
 === AUTOTESTGEN PIPELINE COMPLETE ===
@@ -617,6 +748,21 @@ Next Steps:
      - WebdriverIO: npx wdio run wdio.conf.js
   3. Commit generated test files to version control
 ```
+
+---
+
+## Post-Pipeline Tools
+
+These run AFTER the orchestrator completes — not part of the 8-stage
+pipeline, but part of the same workflow loop:
+
+| Prompt                                           | Purpose                                                                         | When to run                                  |
+|--------------------------------------------------|---------------------------------------------------------------------------------|----------------------------------------------|
+| `prompts/utility-pom-locator-miner.prompt.md`    | Mines existing POMs into `learning/locator-learning-*.json` — feeds Stage 3.    | Onboarding, refactor, periodic.              |
+| `prompts/execution/01-test-failure-fixer.prompt.md` | Reads test reports after a test run, classifies failures, fixes specs/POMs in place, and writes `learning/locator-failure-*.json` for the next miner run. | After every test execution where any test failed. |
+
+Both prompts use `mcp_*` tools via the same `autotestgen` server. Each is
+standalone and resumable.
 
 ---
 
