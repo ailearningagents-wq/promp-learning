@@ -78,6 +78,8 @@
   },
 
   "learning": {
+    "learningProjectPath": "$LEARNING_PROJECT_PATH",
+    "_learningProjectPath_note": "Absolute path to the project whose locator-learning scan files are read and merged. Set LEARNING_PROJECT_PATH in .env.",
     "maxFiles": 6,
     "_maxFiles_note": "Maximum number of locator-learning scan files Stage 3 merges when biasing locator capture, and the cap kept in INDEX.json by the miner. Older entries are pruned from the index (not deleted from disk). 6 ≈ 6 monthly miner runs; higher values improve locator signal but increase merge time.",
     "maxFileBytes": 5000000,

@@ -2,12 +2,18 @@
 mode: agent
 description: >
   UTILITY — POM Locator Miner.
-  Scans existing Page Object Model classes in a manual / Playwright / Selenium
-  project and extracts every locator strategy in use (data-testid, id, name,
-  aria-*, getByRole, getByLabel, css, xpath, $('#id'), etc.). Aggregates by
-  strategy, control type, and UI library. Writes a timestamped JSON file to
-  the workspace `learning/` folder so the DOM crawler (Stage 3) can train on
-  the project's actual locator habits.
+  Performs a deep scan of existing Page Object Model classes in a manual /
+  Playwright / Selenium / WebdriverIO project. For every page class it
+  captures: full class anatomy (class name, page URL pattern, constructor
+  args, navigation methods, action methods, getter methods, assertion helpers),
+  every locator strategy in use (data-testid, id, name, aria-*, getByRole,
+  getByLabel, css, xpath, chained, nth, filter, shadow-DOM, iframe, etc.),
+  complex scenario-specific element patterns (dynamic table rows, modal
+  elements, conditional visibility, shadow DOM, iframes, repeated components),
+  wait and assertion strategies, and per-control-type UI library habits.
+  Aggregates all of this into a rich timestamped learning JSON so Stage 3
+  (DOM crawler) and Stage 7 (test generator) can mirror the project's real
+  element-finding and interaction conventions exactly.
 tools:
   - read_file
   - create_file
@@ -31,7 +37,7 @@ fingerprint. The pipeline still works without learnings; the miner just
 makes Stage 3 smarter.
 
 ## Inputs Required
-- `pipeline.config.json` → `project.existingProjectPath` (the project to
+- `pipeline.config.json` → `learning.learningProjectPath` (the project to
   scan). Or, when running on a different project ad-hoc, the user can pass
   an absolute path inline at invocation.
 - `output/project-fingerprint.json` (optional) — if present, used to scope
@@ -44,7 +50,7 @@ makes Stage 3 smarter.
 
 The `learning/` folder lives at workspace root. Each scan creates a new
 file; old files are never modified or deleted by this prompt — retention is
-manual (see `LOCATOR-LEARNING-RULEBOOK.md`).
+manual.
 
 ---
 
@@ -55,7 +61,7 @@ with one call:
 
 ```jsonc
 mcp_pom_mine_locators({
-  "projectPath": <resolved project.existingProjectPath>,
+  "projectPath": <resolved learning.learningProjectPath>,
   "framework":   "auto"
 })
 ```
@@ -74,7 +80,7 @@ Step 7 (print summary) still apply either way.
 
 Determine the target project path:
 
-1. If invoked via the orchestrator → use `project.existingProjectPath`.
+1. If invoked via the orchestrator → use `learning.learningProjectPath`.
 2. If invoked directly with a path argument → use that.
 3. If `output/project-fingerprint.json` exists → use
    `projectFingerprint.folders.pages` to scope the scan.
