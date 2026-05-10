@@ -21,12 +21,69 @@ by severity, and produce an actionable report for the QA architect.
 - `output/application-map.json` (from Stage 3)
 - `output/test-plan.json` (from Stage 4)
 - `output/pipeline-state.json` (current counters)
-- All generated spec files (from Stage 7)
+- All generated spec files (from Stage 7) — processed **one file at a time** (see Step 0)
 - All generated POM files (from Stage 6)
 
 ---
 
+## Step 0 — Resume Check & Streaming Setup
+
+Before doing any work, check `output/pipeline-state.json`:
+
+- If `stages.stage8.status` is `"completed"` → log `[STAGE 8] Already completed — skipping.` and exit.
+- If `stages.stage8.pagesAnalyzed` exists and is non-empty → resume from where the previous run stopped.
+  Log `[STAGE 8] Resuming — [N] pages already analyzed.`
+- Otherwise → start fresh.
+
+Set `stages.stage8.status` to `"in_progress"` in `pipeline-state.json` before continuing.
+
+**Streaming rule:** Do NOT read all spec files into memory at once. Process one spec file at a time:
+1. Get the list of spec files from `stages.stage7.specFilesCompleted` in `pipeline-state.json`.
+   **If `stages.stage7.specFilesCompleted` is absent or empty**, fall back to scanning the
+   project specs folder (`projectFingerprint.folders.specs`) recursively for files matching the
+   project naming convention (`*.spec.ts`, `*.spec.js`, `*Test.java`, `*Tests.cs`,
+   `*.test.js`, `*.spec.js`). Log:
+   ```
+   [STAGE 8] WARNING: stages.stage7.specFilesCompleted checkpoint is missing.
+   Falling back to scanning specs folder: [projectFingerprint.folders.specs]
+   Found [N] spec files.
+   ```
+2. Skip any files whose corresponding page already appears in `stages.stage8.pagesAnalyzed`.
+3. For each spec file: read it ONCE in this stage. While reading, capture
+   ALL of the following signals into the in-memory coverage matrix entry
+   for that file (so Step 4 never needs to re-open the file):
+   - **Test IDs** — every `TC-[A-Z]+-[0-9]+` pattern.
+   - **Test name strings** — the description / `@DisplayName` / `[Description]`
+     text on each test (used by Step 4 quality check #1).
+   - **Raw selector literals** — any line containing `page.locator(`,
+     `By.cssSelector(`, `By.CssSelector(`, `By.xpath(`, `By.XPath(`,
+     `$('//`, `$('.`, `driver.findElement(` outside of POM imports
+     (used by Step 4 quality check #2 — POM use).
+   - **Hardcoded string literals in assertions** — any `expect("…")`,
+     `Assert.That("…")`, `assert.equal("…", …)`, `Assert.Equal("…", …)`
+     where the literal is not coming from a data factory import
+     (used by Step 4 quality check #3 — data factory use).
+   - **Cross-test references** — any line referring to module-level state
+     shared across tests (used by Step 4 quality check #6 — independence).
+   Then release the file before moving on.
+4. After each file is processed, persist the updated `stages.stage8.pagesAnalyzed` checkpoint.
+
+---
+
 ## Step 1 — Build Coverage Matrix
+
+**Do NOT read `output/application-map.json` in full before building the
+matrix.** For a large application the full map can exhaust context before
+any gaps are reported. Instead:
+1. Read `output/application-map.json` and extract only the **top-level page
+   list** (page routes / IDs).
+2. For each page:
+   a. Load only that page's entry from the application map.
+   b. Build the coverage matrix entry for that page by comparing its forms,
+      fields, buttons, modals, and conditional-logic branches against the test
+      IDs already extracted in Step 0.
+   c. Release the page data before advancing to the next page.
+3. After all pages are processed, assemble the final matrix summary.
 
 For every page and component in the application map, create a coverage matrix:
 
@@ -109,7 +166,16 @@ Generate a list of all missing unauthorized access tests.
 
 ## Step 4 — Test Quality Checks
 
-Review generated test files for quality issues:
+> **Do NOT re-read spec files in this step.** These checks MUST use signals
+> captured during Step 0's streaming pass. During Step 0, when each spec file
+> is read for test ID extraction, additionally capture and store in the coverage
+> matrix: test name strings (for descriptiveness), any raw selector literals
+> visible in test bodies (e.g. `page.locator(`, `By.CssSelector(` — for the POM
+> check), and any hardcoded string literals in `expect`/`Assert` calls (for the
+> data-factory check). Step 4 then applies the quality rules to those cached
+> signals. Re-opening spec files here negates Step 0’s streaming discipline.
+
+Review quality signals collected during Step 0 for each spec file:
 
 ### Check each test for:
 - [ ] Does the test have a clear, descriptive name?
@@ -191,7 +257,10 @@ Create `output/coverage-gap-report.json`:
 
 ---
 
-## Step 6 — Write Merge Report (Existing Projects)
+## Step 6 — Write Merge Report (Existing Projects Only)
+
+**If `project.mode` is `"new"`, skip this step entirely.**
+New projects have no pre-existing test files to merge into; a merge report is not applicable.
 
 If mode is `"existing"`, finalize `output/merge-report.json`:
 
@@ -231,55 +300,30 @@ If mode is `"existing"`, finalize `output/merge-report.json`:
 
 ---
 
-## Step 7 — Final Pipeline Summary
+## Step 7 — Stage 8 Completion
 
 Update `output/pipeline-state.json`:
-- Set `stages.stage8` to `"completed"`
-- Set `completedAt` to current ISO timestamp
+- Set `stages.stage8.status` to `"completed"`
+- Set `stages.stage8.pagesAnalyzed` to the full list of pages analyzed
+- Set `pipeline.lastUpdated` to current ISO timestamp
 
-Produce the final summary in the exact format defined in the master orchestrator:
+Stage 8 produces only `output/coverage-gap-report.json` (and updates
+`output/merge-report.json` for existing projects). It does NOT print the
+pipeline-completion summary or perform the post-pipeline cleanup — those
+are the master orchestrator's responsibility (see master-orchestrator
+→ "Post-Pipeline Cleanup" and "Pipeline Completion Summary").
 
+Hand control back to the orchestrator with:
 ```
-=== AUTOTESTGEN PIPELINE COMPLETE ===
-
-Application:     [app name]
-Environment:     [environment]
-Mode:            [existing | new]
-Tech Stack:      [framework + language]
-
-Pages Discovered:     [count]
-Forms Discovered:     [count]
-Test Cases Generated: [count]
-  - Smoke:            [count]
-  - Regression:       [count]
-  - E2E:              [count]
-
-Files Created:        [count]
-Files Extended:       [count]
-Files Skipped:        [count]
-
-Coverage Gaps Identified: [count]
-  - Critical: [count]
-  - High:     [count]
-  - Medium:   [count]
-  - Low:      [count]
-
-Output Files:
-  - output/application-map.json
-  - output/test-plan.json
+=== STAGE 8 COMPLETE ===
+Mode:                       [full | single-route]
+Coverage Gaps Identified:   [count]
+  - Critical:               [count]
+  - High:                   [count]
+  - Medium:                 [count]
+  - Low:                    [count]
+Reports written:
   - output/coverage-gap-report.json
-  - output/merge-report.json
-
-Next Steps:
-  1. Review coverage-gap-report.json — address critical and high gaps
-  2. Run tests:
-     - Playwright (TS/JS): npx playwright test --headed
-     - Selenium Java (Maven): mvn test
-     - Selenium C# (.NET): dotnet test
-     - selenium-js (Mocha/Jest): npm test
-     - WebdriverIO: npx wdio run wdio.conf.js
-  3. Set BASE_URL environment variable for your target environment
-  4. Commit generated test files to version control
-
-*** PIPELINE COMPLETE ***
+  - output/merge-report.json   (existing-project mode only)
+Stage 8: PASSED — Returning to orchestrator for cleanup + final summary.
 ```

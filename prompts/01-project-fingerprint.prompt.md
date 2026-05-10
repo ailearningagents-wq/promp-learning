@@ -19,7 +19,30 @@ precisely captures its tech stack, structure, naming conventions, and code style
 All code generated in later stages will strictly conform to this fingerprint.
 
 ## Inputs Required
-- `config.json` → `project.existingProjectPath`
+- `pipeline.config.json` → `project.existingProjectPath`
+
+---
+
+## Step 0 — Early Exit for New Projects
+
+If `config.project.mode` is `"new"`, **skip this entire stage.**
+
+There is no existing project to fingerprint. The master orchestrator already handles
+new-project mode by using `config.project.newProjectTechStack` for all downstream stages.
+
+Update `output/pipeline-state.json`:
+- Set `stages.stage1.status` to `"completed"`
+- Set `stages.stage1.skippedReason` to `"mode=new — no existing project to fingerprint"`
+
+Log:
+```
+=== STAGE 1 SKIPPED ===
+Reason: project.mode = "new" — fingerprinting not applicable.
+Tech stack will be sourced from config.project.newProjectTechStack by downstream stages.
+Stage 1: PASSED (skipped) — Proceeding to Stage 2
+```
+
+Exit immediately. Do NOT proceed to Step 1.
 
 ---
 
@@ -100,7 +123,16 @@ In later stages, new folders matching the closest convention will be created.
 
 ## Step 4 — Naming Convention Detection
 
-Read 3 existing spec files and 3 existing POM files. Analyze:
+Read **up to 3** existing spec files and **up to 3** existing POM files. If fewer
+than 3 files exist in either category, read as many as are available and log:
+```
+[STAGE 1] NOTE: only [N] [spec/POM] file(s) found — analyzing all available.
+```
+Read the **first 150 lines** of each file. If the file exceeds 150 lines, also
+read the **last 50 lines** (closing brackets, final imports, decorator
+patterns). The combined head + tail window catches naming conventions and any
+trailing class metadata without exhausting context on long files.
+Analyze:
 
 ### File naming:
 - Are spec files named `*.spec.ts`, `*.test.ts`, `*-spec.ts`, `*Test.java`, `*Tests.cs`?
@@ -120,7 +152,13 @@ Read 3 existing spec files and 3 existing POM files. Analyze:
 
 ## Step 5 — Code Style Sampling
 
-Read 2 complete existing spec files in full. Extract and store as style samples:
+Read **up to 2** existing spec files, capped at **150 lines each** (the first
+150 lines are sufficient to determine import style, describe nesting, assertion
+style, and async patterns). Read **up to 2** existing POM files, also capped
+at **150 lines each**. If fewer than 2 files of either type exist, read as many
+as are available. Extract and store as style samples:
+
+From spec files:
 - How are imports structured (grouped? aliased?)
 - How are `describe` blocks nested
 - How is `beforeEach`/`afterEach` used
@@ -128,7 +166,7 @@ Read 2 complete existing spec files in full. Extract and store as style samples:
 - How are async/await patterns used
 - Is there a custom `test` fixture wrapper?
 
-Read 2 complete POM files in full. Extract:
+From POM files:
 - Constructor pattern
 - How locators are defined (`page.locator()` vs `By.id()` vs `this.page.$()`)
 - How action methods are structured

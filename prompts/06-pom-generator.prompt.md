@@ -33,15 +33,62 @@ raw selectors. If a POM already exists for a page, extend it — never recreate 
 5. **No assertions in POMs** — POMs only perform actions and return data; tests do the asserting
 
 ## Inputs Required
-- `output/application-map.json` (from Stage 3)
+- `output/application-map.json` (from Stage 3) — pages, fields, **uiLibrary**,
+  **componentSelector**, **interactionStrategy** per field
+- `output/test-plan.json` (from Stage 4) — drives **which** POMs are
+  required, via each test case's `artifactRequirements.pageClass`
 - `output/project-fingerprint.json` (from Stage 1, if existing project)
 - `config.project.newProjectTechStack` (for new projects)
+- `output/pipeline-state.json` — for resume + single-route mode
+
+---
+
+## Execution Model — Streaming, Resume, Single-Route (REQUIRED)
+
+This stage MUST stream page-by-page rather than loading every page's POM
+in memory and writing at the end.
+
+1. After each POM file is written or extended, update
+   `pipeline-state.json` → `stage6.pagesCompleted` and persist before
+   advancing to the next page.
+2. **Resume:** on startup, read `pipeline-state.json`. Skip any page
+   already in `stage6.pagesCompleted` whose POM file exists on disk.
+3. **Single-route mode:** if `pipeline.mode === "single-route"`, the only
+   POM to create or extend is the one whose page URL matches
+   `pipeline.singleRoute`. Every other POM is left untouched.
+4. The set of POM files this stage owns is determined by collecting the
+   unique `artifactRequirements.pageClass` values across the test plan
+   (filtered by single route if applicable). **When collecting these values,
+   read only the `artifactRequirements.pageClass` field from each test case —
+   do NOT load `steps[]`, `testDataRequirements`, `relatedElements`, or any
+   other fields.** A POM only present in the application map but never
+   referenced by any test case can be skipped unless
+   `config.generation.generateUnreferencedPoms === true`.
 
 ---
 
 ## Step 1 — Determine POM Style
 
-Read project fingerprint (or new project tech stack) to determine:
+> **New-project guard (REQUIRED FIRST):** If `config.project.mode === "new"`,
+> `output/project-fingerprint.json` does **not** exist (Stage 1 was skipped).
+> Do NOT attempt to read it. Source style settings from
+> `config.project.newProjectTechStack` instead and use these defaults:
+>
+> | Tech stack             | Language     | Locator style              | File suffix     | POMs folder              |
+> |------------------------|--------------|----------------------------|-----------------|--------------------------|
+> | playwright-typescript  | typescript   | `page.locator()`           | `*Page.ts`      | `src/pages/`             |
+> | playwright-javascript  | javascript   | `page.locator()`           | `*Page.js`      | `src/pages/`             |
+> | selenium-java          | java         | `By.id()` / `By.cssSelector` | `*Page.java`  | `src/main/java/.../pages/` |
+> | selenium-dotnet        | csharp       | `By.Id` / `By.CssSelector` | `*Page.cs`      | `Pages/`                 |
+> | selenium-js            | javascript   | `By.id()` / `By.css()`     | `*Page.js`      | `pages/`                 |
+> | webdriverio            | javascript   | `$('#id')`                 | `*Page.js`      | `test/pageobjects/`      |
+>
+> Skip the rest of this step (BasePage detection / windowed reads) — there is
+> no existing project to read. Proceed to Step 2 to create the BasePage from
+> scratch.
+
+For existing projects (`config.project.mode === "existing"`), read project
+fingerprint to determine:
 - Language: TypeScript / JavaScript / Java / C#
 - POM base class name and import path
 - Locator style: `page.locator()` / `page.$()` / `By.id()` / `driver.findElement()` / `By.CssSelector()`
@@ -49,8 +96,14 @@ Read project fingerprint (or new project tech stack) to determine:
 - Target folder: `projectFingerprint.folders.pages` or default for new project
 
 If existing project has a `BasePage`:
-- Read the BasePage file in full to understand what shared methods are available
-- Do NOT re-implement anything already in BasePage
+- **Do not read it in full in one pass.** Read only the first 200 lines to identify
+  what shared methods are already declared. If the file exceeds 200 lines, also read
+  the last 50 lines (closing bracket / final methods). This is sufficient to know
+  the API surface without exhausting context on a 2000-line BasePage.
+- **Hard cap on windowed reads:** at most **4 windows of 150 lines** (600 lines total)
+  per BasePage / POM file. After 4 windows, stop reading and log:
+  `[STAGE 6] WARNING: BasePage exceeds 600 lines — analyzing first 600 only. Manual review may be needed.`
+- Do NOT re-implement anything already in BasePage.
 
 ---
 
@@ -60,7 +113,11 @@ If **no BasePage exists** in the target project, create one. This applies to:
 - All **new** projects (always create)
 - **Existing** projects where `projectFingerprint.folders.pages` contains no base class file (i.e. no `BasePage.ts`, `BasePage.java`, `BasePage.cs`, or any class ending in `BasePage`, `PageBase`, `AbstractPage`)
 
-If an existing BasePage IS found → read it in full to understand what shared methods are available. Do NOT re-implement anything already in BasePage.
+If an existing BasePage IS found → read it using the same windowed approach described in
+Step 1 (first 200 lines, plus the last 50 lines if the file exceeds 200 lines). This is
+sufficient to catalogue the API surface. Do NOT read the full file — large BasePage
+implementations can exhaust context before any POM is generated. Do NOT re-implement
+anything already in BasePage.
 
 Create the appropriate BasePage for the project's language:
 
@@ -116,243 +173,45 @@ export abstract class BasePage {
 }
 ```
 
-### JavaScript BasePage: Same without TypeScript types.
+### Other frameworks
 
-### WebdriverIO BasePage (`pages/BasePage.js`):
-```javascript
-// Auto-generated by AutoTestGen Stage 6
-// WebdriverIO uses a global `browser` object — no driver injection needed.
-class BasePage {
-    constructor(url) {
-        this.url = url;
-    }
+For JavaScript / WebdriverIO / selenium-js / Selenium Java / Selenium C#
+BasePages and POMs, follow the same shape as the TypeScript canonical
+above, adapted to the language. Concrete copy-paste examples live in:
 
-    async open() {
-        await browser.url(this.url);
-        await this.waitForPageLoad();
-    }
+- `prompts/_reference/basepage-examples.md` — BasePage variants for all
+  five non-TypeScript frameworks
+- `prompts/_reference/pom-examples.md` — POM variants (Selenium Java,
+  Selenium C#) plus the C# locator-priority list
 
-    async waitForPageLoad() {
-        await browser.waitUntil(
-            async () => (await browser.execute(() => document.readyState)) === 'complete',
-            { timeout: 10000, timeoutMsg: 'Page did not load in time' }
-        );
-    }
-
-    async getTitle() { return browser.getTitle(); }
-    async getCurrentUrl() { return browser.getUrl(); }
-
-    async getToastMessage() {
-        const toast = await $('[role="alert"], .toast, .notification, .snackbar');
-        return toast.getText();
-    }
-}
-
-module.exports = BasePage;
-```
-
-> **Note for `selenium-js` projects:** BasePage is a plain JavaScript class that accepts `driver` and `url` in the constructor — same pattern as the Java BasePage above but in JavaScript. Use `By.id()`, `By.css()`, `driver.findElement()` throughout.
-
-### Java Selenium BasePage:
-```java
-// Auto-generated by AutoTestGen Stage 6
-public abstract class BasePage {
-    protected WebDriver driver;
-    protected String url;
-
-    public BasePage(WebDriver driver, String url) {
-        this.driver = driver;
-        this.url = url;
-        PageFactory.initElements(driver, this);
-    }
-
-    public void navigate() {
-        driver.get(url);
-        waitForPageLoad();
-    }
-
-    protected void waitForPageLoad() {
-        new WebDriverWait(driver, Duration.ofSeconds(10))
-            .until(webDriver -> ((JavascriptExecutor) webDriver)
-                .executeScript("return document.readyState").equals("complete"));
-    }
-
-    public String getPageTitle() { return driver.getTitle(); }
-    public String getCurrentUrl() { return driver.getCurrentUrl(); }
-}
-```
-
-### C# (.NET) Selenium BasePage (`BasePage.cs`):
-```csharp
-// Auto-generated by AutoTestGen Stage 6
-using OpenQA.Selenium;
-using OpenQA.Selenium.Support.UI;
-using System;
-
-namespace [ProjectNamespace].Pages
-{
-    public abstract class BasePage
-    {
-        protected readonly IWebDriver Driver;
-        protected readonly string Url;
-
-        protected BasePage(IWebDriver driver, string url)
-        {
-            Driver = driver;
-            Url    = url;
-        }
-
-        public virtual void Navigate()
-        {
-            Driver.Navigate().GoToUrl(Url);
-            WaitForPageLoad();
-        }
-
-        protected void WaitForPageLoad()
-        {
-            new WebDriverWait(Driver, TimeSpan.FromSeconds(10))
-                .Until(d => ((IJavaScriptExecutor)d)
-                    .ExecuteScript("return document.readyState").Equals("complete"));
-        }
-
-        public string GetPageTitle()   => Driver.Title;
-        public string GetCurrentUrl()  => Driver.Url;
-
-        protected IWebElement FindElement(By locator)
-            => new WebDriverWait(Driver, TimeSpan.FromSeconds(10))
-                   .Until(d => d.FindElement(locator));
-
-        public string GetToastMessage()
-        {
-            try { return FindElement(By.CssSelector("[role='alert'], .toast, .notification")).Text; }
-            catch { return string.Empty; }
-        }
-    }
-}
-```
-
-### C# Locator Priority (Selenium):
-1. `id` attribute → `By.Id("element-id")`
-2. `name` attribute → `By.Name("field-name")`
-3. `data-testid` attribute → `By.CssSelector("[data-testid='value']")`
-4. `aria-label` → `By.XPath("//button[@aria-label='Submit']")` 
-5. CSS selector → `By.CssSelector(".specific-class")` (last resort)
-
-### C# POM Example (`RequestCreatePage.cs`):
-```csharp
-// Auto-generated by AutoTestGen Stage 6
-// Page: /requests/create — Create Request Form
-using OpenQA.Selenium;
-
-namespace [ProjectNamespace].Pages
-{
-    public class RequestCreatePage : BasePage
-    {
-        // Locators
-        private By RequestNameInput  => By.Id("request-name");
-        private By CategorySelect    => By.Id("category");
-        private By DueDateInput      => By.Id("due-date");
-        private By DescriptionInput  => By.Id("description");
-        private By SubmitButton      => By.CssSelector("[data-testid='submit-btn']");
-        private By CancelButton      => By.CssSelector("[data-testid='cancel-btn']");
-        private By RequestNameError  => By.CssSelector("[data-testid='request-name-error']");
-        private By SuccessMessage    => By.CssSelector("[role='alert'].success, .success-notification");
-
-        public RequestCreatePage(IWebDriver driver, string baseUrl)
-            : base(driver, $"{baseUrl}/requests/create") { }
-
-        public void FillRequestName(string value)
-            => FindElement(RequestNameInput).SendKeys(value);
-
-        public void SelectCategory(string value)
-            => new SelectElement(FindElement(CategorySelect)).SelectByText(value);
-
-        public void FillDueDate(string value)
-            => FindElement(DueDateInput).SendKeys(value);
-
-        public void FillDescription(string value)
-            => FindElement(DescriptionInput).SendKeys(value);
-
-        public void ClickSubmit()
-            => FindElement(SubmitButton).Click();
-
-        public void ClickCancel()
-            => FindElement(CancelButton).Click();
-
-        public string GetRequestNameError()
-            => FindElement(RequestNameError).Text;
-
-        public string GetSuccessMessage()
-            => FindElement(SuccessMessage).Text;
-    }
-}
-```
-
-### Java Selenium POM Example (`RequestCreatePage.java`):
-```java
-// Auto-generated by AutoTestGen Stage 6
-// Page: /requests/create — Create Request Form
-// Locators follow priority: By.id > By.name > By.cssSelector > By.xpath
-import org.openqa.selenium.*;
-import org.openqa.selenium.support.ui.*;
-import java.time.Duration;
-
-public class RequestCreatePage extends BasePage {
-
-    // Locators
-    private final By requestNameInput = By.id("request-name");
-    private final By categorySelect   = By.id("category");
-    private final By dueDateInput     = By.id("due-date");
-    private final By descriptionInput = By.id("description");
-    private final By submitButton     = By.cssSelector("[data-testid='submit-btn']");
-    private final By cancelButton     = By.cssSelector("[data-testid='cancel-btn']");
-    private final By requestNameError = By.cssSelector("[data-testid='request-name-error']");
-    private final By successMessage   = By.cssSelector("[role='alert'].success, .success-notification");
-
-    public RequestCreatePage(WebDriver driver, String baseUrl) {
-        super(driver, baseUrl + "/requests/create");
-    }
-
-    public void fillRequestName(String value) {
-        WebElement el = new WebDriverWait(driver, Duration.ofSeconds(10))
-            .until(ExpectedConditions.visibilityOfElementLocated(requestNameInput));
-        el.clear();
-        el.sendKeys(value);
-    }
-
-    public void selectCategory(String visibleText) {
-        new Select(driver.findElement(categorySelect)).selectByVisibleText(visibleText);
-    }
-
-    public void fillDueDate(String value) {
-        driver.findElement(dueDateInput).sendKeys(value);
-    }
-
-    public void fillDescription(String value) {
-        driver.findElement(descriptionInput).sendKeys(value);
-    }
-
-    public void clickSubmit() {
-        driver.findElement(submitButton).click();
-    }
-
-    public void clickCancel() {
-        driver.findElement(cancelButton).click();
-    }
-
-    public String getRequestNameError() {
-        return driver.findElement(requestNameError).getText();
-    }
-
-    public String getSuccessMessage() {
-        return driver.findElement(successMessage).getText();
-    }
-}
-```
+**Before reading these files, verify they exist.** If either file is absent,
+do NOT stop the pipeline. Instead, fall back to generating the BasePage and
+POMs based on:
+1. The TypeScript canonical template shown in Step 2 above, adapted to the
+   target language using standard conventions for that language.
+2. For Java: use TestNG/JUnit `By.*` locators, WebDriverWait, and a standard
+   `BasePage` extending `Object` with a protected `WebDriver driver` field.
+3. For C#: use NUnit/MSTest/xUnit `By.*` locators, `WebDriverWait`, and a
+   `BasePage` with a protected `IWebDriver _driver` field. Apply the C#
+   Locator Priority list (By.Id → By.Name → By.CssSelector → By.XPath).
+4. For selenium-js: use `selenium-webdriver` `By.*` locators with `async/await`.
+5. For WebdriverIO: use `$()` / `$$()` selectors.
+Log a warning: `[STAGE 6] WARNING: _reference files not found — generating from built-in templates.`
 
 ---
 
 ## Step 3 — Generate POM Per Page
+
+**Do NOT read `output/application-map.json` in full before starting.** The
+complete set of pages requiring POMs is already known from the test plan's
+`artifactRequirements.pageClass` values (collected in the Execution Model above).
+For each page in that set:
+1. Read only that page's entry from `application-map.json`.
+2. Generate the POM class from that page's locators and interaction strategies.
+3. Write the file to disk and update `pipeline-state.json`.
+4. Release the page data before advancing to the next page.
+
+This ensures a 100-page application does not exhaust context during POM generation.
 
 For each page in `application-map.json`, generate a POM class.
 
@@ -373,6 +232,90 @@ For Playwright (TypeScript / JavaScript) projects, choose the locator in this pr
 4. `name` attribute → `page.locator('[name="field-name"]')`
 5. Role + text → `page.getByRole('textbox', { name: 'Request Name' })`
 6. CSS selector → `page.locator('.specific-class')` (only if nothing else works)
+
+### UI-Library-Aware Locators & Action Methods (REQUIRED)
+
+For every field whose `uiLibrary` in the application map is `kendo` or
+`material`, the priority above is **overridden** by the field's
+`componentSelector` and `interactionStrategy` from Stage 3 (see
+03-dom-crawl → 3h). Treating these wrappers as native `<select>` or
+`<input>` produces specs that silently submit no value — this is the
+single most common cause of "the test passes but the record is empty"
+in Stage 7's output.
+
+**Locator rule:** the POM property points at the wrapper component, not
+the inner native element. Examples:
+```typescript
+// Kendo
+this.categoryDropdown = page.locator("kendo-dropdownlist[name='category']");
+// Material
+this.prioritySelect   = page.locator("mat-select[formcontrolname='priority']");
+// Material checkbox — target the touch target, not the inner <input>
+this.agreeCheckbox    = page.locator("mat-checkbox[formcontrolname='agree'] .mat-mdc-checkbox-touch-target");
+```
+
+**Action method rule:** every Kendo / Material control gets a dedicated
+action method on the POM that implements the captured
+`interactionStrategy`. Tests call `requestPage.selectCategory('TypeA')`;
+they do NOT touch `.k-list-item` or `mat-option` themselves.
+
+Reference implementations to emit per library (TypeScript / Playwright):
+
+```typescript
+// Kendo dropdownlist / combobox — open, wait, click matching item
+private async selectKendoOption(wrapper: Locator, optionText: string): Promise<void> {
+  await wrapper.click();
+  const list = this.page.locator('.k-list-container').last();
+  await list.waitFor({ state: 'visible' });
+  await list.locator('.k-list-item', { hasText: optionText }).click();
+  // Verification — guards against stale popup
+  await expect(wrapper.locator('.k-input-inner')).toHaveValue(optionText);
+}
+
+// Material select — open, wait for overlay, click matching mat-option
+private async selectMatOption(wrapper: Locator, optionText: string): Promise<void> {
+  await wrapper.click();
+  const panel = this.page.locator('.cdk-overlay-pane mat-option', { hasText: optionText });
+  await panel.first().waitFor({ state: 'visible' });
+  await panel.first().click();
+  await expect(wrapper.locator('.mat-mdc-select-value-text')).toHaveText(optionText);
+}
+
+// Material checkbox — click touch target, not inner <input>
+private async toggleMatCheckbox(wrapper: Locator, desired: boolean): Promise<void> {
+  const touch = wrapper.locator('.mat-mdc-checkbox-touch-target');
+  const inputEl = wrapper.locator('input[type="checkbox"]');
+  const current = await inputEl.isChecked();
+  if (current !== desired) await touch.click();
+}
+
+// Material datepicker / Kendo datepicker — prefer typing the ISO date
+private async setIsoDate(input: Locator, isoDate: string): Promise<void> {
+  await input.fill(isoDate);
+  await input.blur();
+}
+```
+
+For Selenium projects, emit equivalent helpers on `BasePage` (Java /
+C# / JS), e.g. `selectKendoOption(By wrapper, String text)` /
+`SelectKendoOption(By wrapper, string text)`. Specs only ever call the
+typed page methods (`requestPage.SelectCategory("TypeA")`).
+
+**`fillForm` for Kendo / Material forms** must dispatch by `uiLibrary`:
+
+```typescript
+async fillForm(data: Partial<RequestFormData>): Promise<void> {
+  if (data.requestName !== undefined) await this.requestNameInput.fill(data.requestName);
+  if (data.category !== undefined)    await this.selectKendoOption(this.categoryDropdown, data.category);
+  if (data.priority !== undefined)    await this.selectMatOption(this.prioritySelect, data.priority);
+  if (data.dueDate !== undefined)     await this.setIsoDate(this.dueDateInput, data.dueDate);
+  if (data.agree !== undefined)       await this.toggleMatCheckbox(this.agreeCheckbox, data.agree);
+}
+```
+
+If a field's `uiLibrary` is `other` (library couldn't be reliably detected
+in Stage 3), emit the locator using priority rules above and add a
+`// TODO: verify interaction strategy` comment so a human can audit it.
 
 ### TypeScript POM Example (`src/pages/RequestCreatePage.ts`):
 ```typescript
@@ -491,7 +434,17 @@ export class RequestCreatePage extends BasePage {
 
 If mode is `"existing"` and a POM already exists for this page:
 
-1. Read the existing POM file in full
+1. **Do not read the existing POM file in full.** Read in 150-line windows
+   starting from line 1, scanning each window for locator property names and
+   method signatures. **Hard cap: 4 windows (600 lines total) per POM.** If
+   the file exceeds 600 lines, stop reading after the 4th window and log:
+   ```
+   [STAGE 6] WARNING: POM [filename] exceeds 600 lines — analyzing first 600 only.
+   New locators / methods are appended at end of file; manual review may be needed
+   to confirm no overlap with the unread tail.
+   ```
+   Do NOT load method bodies — only declarations and signatures are needed
+   to decide what to skip.
 2. Identify locators and methods that ALREADY EXIST — skip them
 3. Identify NEW locators from the application map that are NOT in the existing POM
 4. Append only the new locators and methods at the end of the existing class (before the closing `}`)
@@ -503,16 +456,24 @@ If mode is `"existing"` and a POM already exists for this page:
 ## Step 5 — Stage 6 Completion
 
 Update `output/pipeline-state.json`:
-- Set `stages.stage6` to `"completed"`
+- Set `stages.stage6.status` to `"completed"`
+- Set `stages.stage6.pagesCompleted` to the full list of POM page classes processed
+- In single-route mode, additionally record `stages.stage6.singleRouteCompleted`
 - Update `counters.filesCreated` and `counters.filesExtended`
 
 Log summary:
 ```
 === STAGE 6 COMPLETE ===
-POM Files Created:    [count]
-POM Files Extended:   [count] (existing projects only)
-BasePage Created:     [yes/no]
-Total Locators:       [count]
-Total Action Methods: [count]
+Mode:                          [full | single-route]
+POM Files Created:             [count]
+POM Files Extended:            [count] (existing projects only)
+POMs Resumed (skipped):        [count]
+BasePage Created:              [yes/no]
+Total Locators:                [count]
+  - Native:                    [count]
+  - Kendo:                     [count]
+  - Material:                  [count]
+Total Action Methods:          [count]
+Library-Aware Action Methods:  [count]   # selectKendoOption / selectMatOption / toggleMatCheckbox / setIsoDate
 Stage 6: PASSED — Proceeding to Stage 7
 ```

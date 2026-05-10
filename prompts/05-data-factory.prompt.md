@@ -28,17 +28,91 @@ They produce consistent, named data sets that describe their intent:
 ## Inputs Required
 - `output/application-map.json` (from Stage 3)
 - `output/project-fingerprint.json` or `config.project.newProjectTechStack`
-- `output/test-plan.json` (from Stage 4) — to understand what data is needed
+- `output/test-plan.json` (from Stage 4) — drives **which** factories to
+  generate, via each test case's `artifactRequirements.dataFile`
+- `output/pipeline-state.json` — for resume + single-route mode
+
+---
+
+## Execution Model — Streaming, Resume, Single-Route (REQUIRED)
+
+This stage MUST stream module-by-module rather than loading every form's
+data variants in memory and writing at the end (see master orchestrator
+→ Cross-Cutting Rules).
+
+1. After each module's data factory file is written, update
+   `pipeline-state.json` → `stage5.modulesCompleted` and persist the file
+   before advancing to the next module.
+2. **Resume:** on startup, read `pipeline-state.json`. Skip any module
+   already in `stage5.modulesCompleted`. Only re-process a module if its
+   data file is missing or invalid.
+3. **Single-route mode:** if `pipeline.mode === "single-route"`, only
+   generate / extend the data factory file for the module that contains
+   the configured `pipeline.singleRoute`. All other modules' factories are
+   left untouched. The set of factory files to touch is determined by
+   collecting each test case in `test-plan.json` whose `page` matches the
+   single route, then taking the unique set of
+   `artifactRequirements.dataFile` values.
 
 ---
 
 ## Step 1 — Read Inputs
 
-Read the application map and extract all forms with their fields.
-Read the project fingerprint to determine language and folder structure.
+**Do NOT read `output/application-map.json` in full.** For a large application,
+the full map can be megabytes of JSON and will exhaust context before a single
+factory file is generated. Instead:
+1. Read `output/application-map.json` and extract only the **top-level page
+   list** (page routes / IDs) — not each page's form fields.
+2. Form-field data for each page is loaded on-demand inside Step 3's streaming
+   loop, one page at a time, when it is actually needed to generate that page's
+   factory variants.
+
+**Do NOT read `output/test-plan.json` in full.** When building the index,
+read only the `artifactRequirements.dataFile` and `testDataRequirements`
+fields from each test case. Skip `steps[]`, `preconditions`,
+`relatedElements`, `expectedResult`, and all other fields — they are not
+needed by this stage and loading them wastes significant context on large
+test plans.
+
+Build a `dataFile → testCases[]` index from each test case's
+`artifactRequirements.dataFile`. The list of factory files this stage must
+produce is exactly the set of unique `dataFile` values in that index —
+nothing more, nothing less.
+
+For each `dataFile`, derive the variant set by unioning the
+`testDataRequirements` blocks of every test case that points at it. This
+guarantees Stage 7 specs always find a named variant for the data they
+import (no missing `RequestsTestData.createRequest.invalid.pastDueDate`
+errors).
+
+Determine language and folder structure:
+
+> **New-project guard:** If `config.project.mode === "new"`,
+> `output/project-fingerprint.json` does NOT exist. Do not attempt to read
+> it — source the language from `config.project.newProjectTechStack` and
+> use the new-project default folder shown below. The "Existing project"
+> branch only applies when `mode === "existing"`.
+
 Determine target folder for data files:
 - Existing project → use `projectFingerprint.folders.data`
+  - **If `folders.data` is `null`** (the fingerprinter found no existing data
+    folder), do NOT stop. Fall back to a sensible default and log:
+    ```
+    [STAGE 5] WARNING: projectFingerprint.folders.data is null — no data folder found
+    in the existing project. Defaulting to [existingProjectPath]/src/data/ (TS/JS)
+    or [existingProjectPath]/src/test/resources/testdata/ (Java)
+    or [existingProjectPath]/TestData/ (C#).
+    The folder will be created if it does not exist.
+    ```
+    Use the default that matches the project's detected language:
+    - TypeScript / JavaScript / selenium-js / WebdriverIO → `src/data/`
+    - Java → `src/test/resources/testdata/`
+    - C# → `TestData/`
 - New project → use `[newProjectPath]/src/data/` (TS) or `[newProjectPath]/data/` (JS)
+
+For Kendo / Material dropdown / radio / checkbox fields, the option set
+captured by Stage 3 (see `field.options` in `application-map.json`) is the
+authoritative source for valid values — do **not** invent option labels.
 
 ---
 
@@ -302,14 +376,18 @@ If mode is `"existing"`:
 ## Step 6 — Stage 5 Completion
 
 Update `output/pipeline-state.json`:
-- Set `stages.stage5` to `"completed"`
+- Set `stages.stage5.status` to `"completed"`
+- Set `stages.stage5.modulesCompleted` to the full list of modules processed
+- In single-route mode, additionally record `stages.stage5.singleRouteCompleted`
 - Update `counters.filesCreated` and `counters.filesExtended`
 
 Log summary:
 ```
 === STAGE 5 COMPLETE ===
+Mode:                         [full | single-route]
 Data Factory Files Created:   [count]
 Data Factory Files Extended:  [count] (existing projects only)
+Modules Resumed (skipped):    [count]
 Total Data Sets Generated:    [count]
   - Valid sets:               [count]
   - Invalid sets:             [count]

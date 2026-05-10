@@ -1,0 +1,160 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://autotestgen.local/schemas/locator-learning.schema.json",
+  "title": "Locator Learning",
+  "description": "Output of utility-pom-locator-miner.prompt.md. One file per scan, written to learning/.",
+  "type": "object",
+  "required": ["scanId", "schemaVersion", "scannedAt", "project", "locatorStrategies"],
+  "properties": {
+    "scanId":        { "type": "string", "description": "Stable id for this scan, e.g. scan-2026-05-09T10-30-00." },
+    "schemaVersion": { "type": "integer", "const": 1 },
+    "scannedAt":     { "type": "string", "format": "date-time" },
+    "samplingApplied": { "type": "boolean", "description": "True if rawLocators was sampled because the project exceeded learning.rawLocatorsMax." },
+
+    "project": {
+      "type": "object",
+      "required": ["path", "framework", "totalPomFiles", "totalLocators"],
+      "properties": {
+        "path":          { "type": "string" },
+        "framework": {
+          "type": "string",
+          "enum": [
+            "playwright-typescript",
+            "playwright-javascript",
+            "selenium-java",
+            "selenium-dotnet",
+            "selenium-js",
+            "webdriverio",
+            "manual",
+            "unknown"
+          ]
+        },
+        "uiLibraries":   { "type": "array", "items": { "type": "string", "enum": ["native", "kendo", "material", "other"] } },
+        "totalPomFiles": { "type": "integer", "minimum": 0 },
+        "totalLocators": { "type": "integer", "minimum": 0 }
+      }
+    },
+
+    "locatorStrategies": {
+      "type": "object",
+      "description": "Aggregate counts per canonical strategy.",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["count", "percentage"],
+        "properties": {
+          "count":         { "type": "integer", "minimum": 0 },
+          "percentage":    { "type": "number",  "minimum": 0, "maximum": 100 },
+          "examplePaths":  { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    },
+
+    "byControlType": {
+      "type": "object",
+      "description": "Strategy distribution per inferred control type (button, input, dropdown, checkbox, radio, datepicker, modal, table, message, unknown).",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "preferredStrategies": { "type": "array", "items": { "type": "string" } },
+          "samples": {
+            "type": "array",
+            "items": { "$ref": "#/$defs/RawLocator" }
+          }
+        }
+      }
+    },
+
+    "byUiLibrary": {
+      "type": "object",
+      "description": "Strategy distribution per UI library wrapper (native, kendo, material, other).",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "preferredStrategies": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    },
+
+    "interactionPatterns": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["pattern", "exampleMethod"],
+        "properties": {
+          "pattern":       { "type": "string", "description": "e.g. 'selectKendoOption', 'fill*', 'click*Submit*'." },
+          "exampleMethod": { "type": "string" },
+          "occurrences":   { "type": "integer", "minimum": 0 }
+        }
+      }
+    },
+
+    "fallbackChains": {
+      "type": "array",
+      "description": "Multi-strategy chains observed in the source — each entry is a single field with multiple locators, ordered by priority.",
+      "items": {
+        "type": "object",
+        "required": ["fieldName", "chain"],
+        "properties": {
+          "file":      { "type": "string" },
+          "fieldName": { "type": "string" },
+          "chain": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["strategy", "rawSelector"],
+              "properties": {
+                "strategy":    { "type": "string" },
+                "rawSelector": { "type": "string" }
+              }
+            }
+          }
+        }
+      }
+    },
+
+    "recommendations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["severity", "message"],
+        "properties": {
+          "severity": { "type": "string", "enum": ["info", "low", "medium", "high"] },
+          "message":  { "type": "string" },
+          "evidence": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    },
+
+    "rawLocators": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/RawLocator" }
+    }
+  },
+
+  "$defs": {
+    "RawLocator": {
+      "type": "object",
+      "required": ["file", "fieldName", "controlType", "uiLibrary", "strategy", "rawSelector"],
+      "properties": {
+        "file":        { "type": "string" },
+        "line":        { "type": "integer", "minimum": 1 },
+        "fieldName":   { "type": "string" },
+        "controlType": {
+          "type": "string",
+          "enum": ["button", "input", "dropdown", "checkbox", "radio", "datepicker", "modal", "table", "message", "unknown"]
+        },
+        "uiLibrary":   { "type": "string", "enum": ["native", "kendo", "material", "other"] },
+        "strategy": {
+          "type": "string",
+          "enum": [
+            "data-testid", "id", "name", "role", "label", "placeholder",
+            "text", "alt", "title", "aria-label", "css", "xpath",
+            "link-text", "tag-name", "class-name", "mobile"
+          ]
+        },
+        "rawSelector": { "type": "string" },
+        "stableHint":  { "type": "string", "description": "Free-form hint about why this locator is stable (e.g. 'name = Submit')." }
+      }
+    }
+  }
+}

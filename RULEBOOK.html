@@ -1,0 +1,824 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>AutoTestGen — Project Rulebook</title>
+<style>
+  /* ─── Reset & Base ─────────────────────────────────────────────────── */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html { font-size: 14px; }
+  body {
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    color: #1a1a2e;
+    background: #f8f9fc;
+    line-height: 1.65;
+  }
+
+  /* ─── Print ─────────────────────────────────────────────────────────── */
+  @media print {
+    body { background: #fff; font-size: 11pt; }
+    .no-print { display: none !important; }
+    .page-break { page-break-before: always; }
+    .cover { height: auto; padding: 60pt 40pt; }
+    pre, code { font-size: 9pt; }
+    a { text-decoration: none; color: inherit; }
+    section { break-inside: avoid; }
+    h2 { page-break-after: avoid; }
+  }
+
+  /* ─── Layout ─────────────────────────────────────────────────────────── */
+  .container { max-width: 960px; margin: 0 auto; padding: 0 32px 60px; }
+
+  /* ─── Cover ──────────────────────────────────────────────────────────── */
+  .cover {
+    background: linear-gradient(135deg, #0f3460 0%, #16213e 60%, #1a1a2e 100%);
+    color: #fff;
+    text-align: center;
+    padding: 80px 40px 60px;
+    min-height: 380px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+  }
+  .cover .badge {
+    background: #e94560;
+    color: #fff;
+    font-size: 11px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    padding: 4px 16px;
+    border-radius: 20px;
+    font-weight: 700;
+  }
+  .cover h1 { font-size: 42px; font-weight: 800; letter-spacing: -1px; margin: 8px 0 4px; }
+  .cover .subtitle { font-size: 17px; opacity: 0.8; max-width: 600px; }
+  .cover .meta { font-size: 12px; opacity: 0.55; margin-top: 24px; letter-spacing: 1px; }
+
+  /* ─── TOC ────────────────────────────────────────────────────────────── */
+  .toc {
+    background: #fff;
+    border-left: 4px solid #e94560;
+    padding: 28px 32px;
+    margin: 32px 0;
+    border-radius: 0 8px 8px 0;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.06);
+  }
+  .toc h2 { font-size: 18px; color: #0f3460; margin-bottom: 16px; }
+  .toc ol { padding-left: 22px; }
+  .toc li { margin: 5px 0; }
+  .toc a { color: #0f3460; text-decoration: none; font-weight: 500; }
+  .toc a:hover { color: #e94560; }
+  .toc .sub { margin-left: 18px; font-size: 12px; color: #555; list-style-type: disc; }
+
+  /* ─── Sections ───────────────────────────────────────────────────────── */
+  section { margin: 40px 0; }
+  h2 {
+    font-size: 26px;
+    font-weight: 800;
+    color: #0f3460;
+    border-bottom: 3px solid #e94560;
+    padding-bottom: 8px;
+    margin-bottom: 20px;
+  }
+  h3 {
+    font-size: 18px;
+    font-weight: 700;
+    color: #16213e;
+    margin: 24px 0 10px;
+  }
+  h4 {
+    font-size: 14px;
+    font-weight: 700;
+    color: #0f3460;
+    margin: 18px 0 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  p { margin: 10px 0; }
+  ul, ol { padding-left: 22px; margin: 10px 0; }
+  li { margin: 5px 0; }
+
+  /* ─── Code ───────────────────────────────────────────────────────────── */
+  pre {
+    background: #1a1a2e;
+    color: #a8d8ea;
+    padding: 18px 22px;
+    border-radius: 8px;
+    font-size: 12px;
+    overflow-x: auto;
+    margin: 14px 0;
+    line-height: 1.6;
+    border-left: 3px solid #e94560;
+  }
+  code {
+    background: #eef0f8;
+    color: #c0392b;
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+  }
+  pre code { background: none; color: inherit; padding: 0; font-size: inherit; }
+
+  /* ─── Tables ──────────────────────────────────────────────────────────── */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 14px 0;
+    font-size: 13px;
+  }
+  th {
+    background: #0f3460;
+    color: #fff;
+    padding: 10px 14px;
+    text-align: left;
+    font-weight: 700;
+  }
+  td {
+    padding: 9px 14px;
+    border-bottom: 1px solid #e8eaf0;
+    vertical-align: top;
+  }
+  tr:nth-child(even) td { background: #f4f6fb; }
+  tr:hover td { background: #eef0fb; }
+
+  /* ─── Info Cards ──────────────────────────────────────────────────────── */
+  .card {
+    background: #fff;
+    border-radius: 10px;
+    padding: 20px 24px;
+    margin: 16px 0;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.07);
+  }
+  .card.warning {
+    border-left: 4px solid #f39c12;
+    background: #fefef0;
+  }
+  .card.info {
+    border-left: 4px solid #2980b9;
+    background: #f0f7ff;
+  }
+  .card.success {
+    border-left: 4px solid #27ae60;
+    background: #f0fff4;
+  }
+  .card.danger {
+    border-left: 4px solid #e94560;
+    background: #fff5f7;
+  }
+  .card strong { color: #0f3460; }
+
+  /* ─── Stage Pills ─────────────────────────────────────────────────────── */
+  .stage-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 14px;
+    margin: 16px 0;
+  }
+  .stage-pill {
+    background: #0f3460;
+    color: #fff;
+    border-radius: 10px;
+    padding: 14px 18px;
+    position: relative;
+  }
+  .stage-pill .num {
+    font-size: 28px;
+    font-weight: 900;
+    opacity: 0.2;
+    position: absolute;
+    right: 14px;
+    top: 8px;
+  }
+  .stage-pill .title { font-size: 13px; font-weight: 700; margin-bottom: 4px; }
+  .stage-pill .desc { font-size: 11px; opacity: 0.75; }
+
+  /* ─── Step List ───────────────────────────────────────────────────────── */
+  .step-list { counter-reset: steps; list-style: none; padding: 0; }
+  .step-list li {
+    counter-increment: steps;
+    padding: 12px 16px 12px 54px;
+    position: relative;
+    margin: 8px 0;
+    background: #fff;
+    border-radius: 8px;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+  }
+  .step-list li::before {
+    content: counter(steps);
+    position: absolute;
+    left: 16px;
+    top: 12px;
+    background: #e94560;
+    color: #fff;
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    font-weight: 800;
+  }
+
+  /* ─── Divider ─────────────────────────────────────────────────────────── */
+  .divider {
+    border: none;
+    border-top: 1px solid #e2e8f0;
+    margin: 40px 0;
+  }
+
+  /* ─── Flow Arrow ──────────────────────────────────────────────────────── */
+  .flow {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    align-items: center;
+    margin: 14px 0;
+  }
+  .flow-step {
+    background: #0f3460;
+    color: #fff;
+    padding: 6px 14px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 700;
+  }
+  .flow-arrow { color: #e94560; font-weight: 900; font-size: 16px; }
+</style>
+</head>
+<body>
+
+<!-- ═══════════════════════ COVER ═══════════════════════ -->
+<div class="cover">
+  <span class="badge">Official Rulebook</span>
+  <h1>AutoTestGen</h1>
+  <p class="subtitle">Complete guide to the AI-powered multi-framework test generation pipeline — from project setup to production-ready spec files</p>
+  <p class="meta">VERSION 1.0 &nbsp;·&nbsp; MAY 2026 &nbsp;·&nbsp; CONFIDENTIAL</p>
+</div>
+
+<div class="container">
+
+<!-- ═══════════════════════ TOC ═══════════════════════ -->
+<div class="toc">
+  <h2>Table of Contents</h2>
+  <ol>
+    <li><a href="#overview">Overview &amp; Architecture</a></li>
+    <li><a href="#prerequisites">Prerequisites</a></li>
+    <li><a href="#quickstart">Quick Start (5 Minutes)</a></li>
+    <li><a href="#config">Configuration Reference</a>
+      <ul class="sub">
+        <li>pipeline.config.json</li>
+        <li>.env file</li>
+        <li>learning.maxFiles</li>
+      </ul>
+    </li>
+    <li><a href="#pipeline">The 8-Stage Pipeline</a>
+      <ul class="sub">
+        <li>Stage 0 — Input Collection</li>
+        <li>Stage 1 — Project Fingerprint</li>
+        <li>Stage 2 — OIDC Authentication</li>
+        <li>Stage 3 — DOM Crawl</li>
+        <li>Stage 4 — Test Strategy</li>
+        <li>Stage 5 — Data Factory</li>
+        <li>Stage 6 — POM Generator</li>
+        <li>Stage 7 — Test Generator</li>
+        <li>Stage 8 — Gap Analyzer</li>
+      </ul>
+    </li>
+    <li><a href="#locator-miner">POM Locator Miner (Utility)</a></li>
+    <li><a href="#learning-system">Locator Learning System</a>
+      <ul class="sub">
+        <li>Multi-file merge</li>
+        <li>Memory-safe processing</li>
+        <li>Time-decay weighting</li>
+        <li>INDEX pruning</li>
+      </ul>
+    </li>
+    <li><a href="#pipeline-modes">Pipeline Modes</a></li>
+    <li><a href="#resume">Resume &amp; Checkpointing</a></li>
+    <li><a href="#outputs">Output Artifacts</a></li>
+    <li><a href="#troubleshooting">Troubleshooting</a></li>
+    <li><a href="#dos-donts">Do's &amp; Don'ts</a></li>
+  </ol>
+</div>
+
+<!-- ═══════════════════════ SECTION 1 — OVERVIEW ═══════════════════════ -->
+<section id="overview">
+  <h2>1. Overview &amp; Architecture</h2>
+  <p>
+    <strong>AutoTestGen</strong> is an AI-agent pipeline that converts any authenticated web application
+    into a full, production-quality test project — with Page Object Models, data factories, and spec files —
+    without any manual locator hunting or boilerplate writing.
+  </p>
+  <p>
+    It supports <strong>Playwright TypeScript</strong>, <strong>Playwright JavaScript</strong>,
+    <strong>Selenium Java</strong>, <strong>Selenium C#/.NET</strong>, <strong>selenium-js</strong>,
+    and <strong>WebdriverIO</strong> out of the box.
+  </p>
+
+  <h3>High-Level Architecture</h3>
+  <div class="flow">
+    <div class="flow-step">pipeline.config.json</div>
+    <span class="flow-arrow">→</span>
+    <div class="flow-step">Master Orchestrator</div>
+    <span class="flow-arrow">→</span>
+    <div class="flow-step">8 Stages</div>
+    <span class="flow-arrow">→</span>
+    <div class="flow-step">Production Test Project</div>
+  </div>
+
+  <div class="stage-grid">
+    <div class="stage-pill"><span class="num">0</span><div class="title">Input Collection</div><div class="desc">Bootstrap output dir &amp; state</div></div>
+    <div class="stage-pill"><span class="num">1</span><div class="title">Project Fingerprint</div><div class="desc">Detect stack, POM patterns</div></div>
+    <div class="stage-pill"><span class="num">2</span><div class="title">OIDC Auth</div><div class="desc">Login &amp; save session state</div></div>
+    <div class="stage-pill"><span class="num">3</span><div class="title">DOM Crawl</div><div class="desc">Discover routes &amp; capture DOM</div></div>
+    <div class="stage-pill"><span class="num">4</span><div class="title">Test Strategy</div><div class="desc">Plan smoke/regression/e2e tests</div></div>
+    <div class="stage-pill"><span class="num">5</span><div class="title">Data Factory</div><div class="desc">Generate test data builders</div></div>
+    <div class="stage-pill"><span class="num">6</span><div class="title">POM Generator</div><div class="desc">Generate Page Object Models</div></div>
+    <div class="stage-pill"><span class="num">7</span><div class="title">Test Generator</div><div class="desc">Generate spec files</div></div>
+    <div class="stage-pill"><span class="num">8</span><div class="title">Gap Analyzer</div><div class="desc">Coverage gaps &amp; recommendations</div></div>
+  </div>
+
+  <h3>Key Design Principles</h3>
+  <ul>
+    <li><strong>Page-wise streaming:</strong> Stage 3 writes each page to disk before moving to the next — no full DOM accumulation in memory.</li>
+    <li><strong>Resumable:</strong> Every stage checkpoints to <code>output/pipeline-state.json</code>; a crashed run continues from the last completed route.</li>
+    <li><strong>Learning system:</strong> The POM Locator Miner teaches Stage 3 the team's locator habits across multiple runs using a memory-safe, time-decay merge.</li>
+    <li><strong>Secrets-safe:</strong> <code>.env</code> values are resolved in memory only — never written to <code>output/</code> or any generated file.</li>
+  </ul>
+</section>
+
+<hr class="divider" />
+
+<!-- ═══════════════════════ SECTION 2 — PREREQUISITES ═══════════════════════ -->
+<section id="prerequisites">
+  <h2>2. Prerequisites</h2>
+
+  <table>
+    <thead><tr><th>Requirement</th><th>Version / Notes</th></tr></thead>
+    <tbody>
+      <tr><td>Node.js</td><td>≥ 18 LTS</td></tr>
+      <tr><td>VS Code</td><td>≥ 1.89 with GitHub Copilot Chat extension</td></tr>
+      <tr><td>Playwright MCP</td><td><code>npx @playwright/mcp@latest</code></td></tr>
+      <tr><td>GitHub Copilot</td><td>Agent mode enabled (<code>mode: agent</code> in prompt frontmatter)</td></tr>
+      <tr><td>Target application</td><td>Must be reachable at <code>application.baseUrl</code> from your machine</td></tr>
+      <tr><td>OIDC / Auth credentials</td><td>Must be set in <code>.env</code> before running</td></tr>
+    </tbody>
+  </table>
+
+  <div class="card info">
+    <strong>Note:</strong> The pipeline drives a real browser via the Playwright MCP server. The target application must be accessible (VPN if needed) before running Stage 2 onwards.
+  </div>
+</section>
+
+<hr class="divider" />
+
+<!-- ═══════════════════════ SECTION 3 — QUICKSTART ═══════════════════════ -->
+<section id="quickstart">
+  <h2>3. Quick Start (5 Minutes)</h2>
+
+  <ol class="step-list">
+    <li>Clone or open the <strong>AutoTestGen workspace</strong> in VS Code.</li>
+    <li>Copy <code>pipeline.config.template.json</code> → <code>pipeline.config.json</code> in the workspace root.</li>
+    <li>Copy <code>.env.template</code> → <code>.env</code> and fill in all required values (app URL, auth credentials, project path).</li>
+    <li>Start the Playwright MCP server: <code>npx @playwright/mcp@latest</code><br/>(or set <code>mcp.autoStart: true</code> in config — the orchestrator will launch it).</li>
+    <li><strong>(Optional but recommended)</strong> Run the POM Locator Miner first if you have an existing test project: type <code>/utility-pom-locator-miner</code> in Copilot Chat.</li>
+    <li>In Copilot Chat, open <code>orchestrator/master-orchestrator.prompt.md</code> and type <code>/master-orchestrator</code>.</li>
+    <li>The orchestrator runs all 8 stages and produces a complete test project at your configured <code>project.existingProjectPath</code> or <code>project.newProjectPath</code>.</li>
+  </ol>
+
+  <div class="card success">
+    <strong>Tip:</strong> For a new route only, set <code>pipeline.mode: "single-route"</code> and <code>pipeline.singleRoute: "/your/route"</code> in <code>pipeline.config.json</code>. This runs the full pipeline scoped to one page and merges results into the existing project.
+  </div>
+</section>
+
+<hr class="divider" />
+
+<!-- ═══════════════════════ SECTION 4 — CONFIGURATION ═══════════════════════ -->
+<section id="config">
+  <h2>4. Configuration Reference</h2>
+
+  <h3>pipeline.config.json</h3>
+  <p>Central config file at workspace root. All <code>$VAR_NAME</code> placeholders resolve from <code>.env</code> at orchestrator startup (in memory only).</p>
+
+  <table>
+    <thead><tr><th>Key</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>pipeline.mode</code></td><td>string</td><td>No (default: full)</td><td><code>"full"</code> or <code>"single-route"</code></td></tr>
+      <tr><td><code>pipeline.singleRoute</code></td><td>string</td><td>If single-route</td><td>e.g. <code>"/requests/create"</code></td></tr>
+      <tr><td><code>project.mode</code></td><td>string</td><td>Yes</td><td><code>"existing"</code> or <code>"new"</code></td></tr>
+      <tr><td><code>project.existingProjectPath</code></td><td>string</td><td>If existing</td><td>Absolute path to test project root</td></tr>
+      <tr><td><code>project.newProjectPath</code></td><td>string</td><td>If new</td><td>Absolute path where project will be created</td></tr>
+      <tr><td><code>project.newProjectTechStack</code></td><td>string</td><td>If new</td><td><code>"playwright-typescript"</code> | <code>"playwright-javascript"</code> | <code>"selenium-java"</code> | <code>"selenium-dotnet"</code> | <code>"webdriverio"</code></td></tr>
+      <tr><td><code>application.baseUrl</code></td><td>string</td><td>Yes</td><td>Target app URL</td></tr>
+      <tr><td><code>auth.type</code></td><td>string</td><td>Yes</td><td><code>"oidc-ping-pkce"</code> | <code>"oidc-standard"</code> | <code>"basic"</code> | <code>"none"</code></td></tr>
+      <tr><td><code>crawl.maxDepth</code></td><td>integer</td><td>No (default: 3)</td><td>Max link depth from base URL</td></tr>
+      <tr><td><code>crawl.excludeRoutes</code></td><td>array</td><td>No</td><td>URL patterns to skip (e.g. <code>["/logout", "/error"]</code>)</td></tr>
+      <tr><td><code>crawl.interactionProbing</code></td><td>boolean</td><td>No (default: true)</td><td>Enable conditional-field probing (Step 4 of Stage 3)</td></tr>
+      <tr><td><code>generation.testTypes</code></td><td>array</td><td>No</td><td><code>["smoke","regression","e2e"]</code></td></tr>
+      <tr><td><code>generation.mergeStrategy</code></td><td>string</td><td>No</td><td><code>"append-only"</code> or <code>"overwrite"</code></td></tr>
+      <tr><td><code>learning.maxFiles</code></td><td>integer</td><td>No (default: 6)</td><td>Max learning scan files merged by Stage 3</td></tr>
+      <tr><td><code>learning.rawLocatorsMax</code></td><td>integer</td><td>No (default: 1000)</td><td>Cap on rawLocators[] per scan file</td></tr>
+      <tr><td><code>mcp.autoStart</code></td><td>boolean</td><td>No (default: true)</td><td>Auto-launch Playwright MCP if not running</td></tr>
+    </tbody>
+  </table>
+
+  <h3>.env File</h3>
+  <p>Required secrets resolved at runtime. Never committed to version control.</p>
+  <pre><code>PROJECT_MODE=existing
+EXISTING_PROJECT_PATH=/abs/path/to/your/test-project
+NEW_PROJECT_PATH=
+NEW_PROJECT_TECH_STACK=playwright-typescript
+
+APP_NAME=MyApp
+APP_BASE_URL=https://myapp.example.com
+APP_ENVIRONMENT=uat
+
+AUTH_TYPE=oidc-ping-pkce
+OIDC_ISSUER_URL=https://auth.example.com
+OIDC_CLIENT_ID=my-client-id
+OIDC_CLIENT_SECRET=
+OIDC_PKCE_ENABLED=true
+OIDC_REDIRECT_URI=https://myapp.example.com/callback
+OIDC_SCOPES=openid profile email
+
+APP_USERNAME=testuser@example.com
+APP_PASSWORD=<secret>
+AUTH_LOGIN_PAGE_TITLE=Sign In
+AUTH_USERNAME_SELECTOR=input[name="email"]
+AUTH_PASSWORD_SELECTOR=input[type="password"]
+AUTH_SUBMIT_SELECTOR=button[type="submit"]
+AUTH_POST_LOGIN_URL_PATTERN=/dashboard</code></pre>
+
+  <div class="card warning">
+    <strong>Security:</strong> Never commit <code>.env</code> to version control. Add it to <code>.gitignore</code>. The pipeline resolves secrets in-memory and never writes them to <code>output/</code>.
+  </div>
+
+  <h3>learning.maxFiles</h3>
+  <p>
+    Controls how many historical locator-learning scan files Stage 3 merges into its
+    "merged-bias" object. Set in <code>pipeline.config.json → learning.maxFiles</code>.
+  </p>
+  <table>
+    <thead><tr><th>Value</th><th>Effect</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td>Only the newest scan — same as original single-file behavior</td></tr>
+      <tr><td>6 (default)</td><td>Last 6 scans merged with time-decay weighting. Recommended.</td></tr>
+      <tr><td>10+</td><td>Longer history window. Useful if conventions changed recently and you want older runs as context.</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<hr class="divider" />
+
+<!-- ═══════════════════════ SECTION 5 — THE 8 STAGES ═══════════════════════ -->
+<section id="pipeline">
+  <h2>5. The 8-Stage Pipeline</h2>
+
+  <h3>Stage 0 — Input Collection &amp; Output Bootstrap</h3>
+  <p><strong>Prompt:</strong> <code>prompts/00-input-collection.prompt.md</code></p>
+  <p>Creates the <code>output/</code> directory structure and seeds <code>output/pipeline-state.json</code>. If state already exists (resume), only updates <code>lastUpdated</code>. No browser interaction.</p>
+  <p><strong>Output:</strong> <code>output/logs/stage0.log</code>, <code>output/pipeline-state.json</code></p>
+
+  <h3>Stage 1 — Project Fingerprint</h3>
+  <p><strong>Prompt:</strong> <code>prompts/01-project-fingerprint.prompt.md</code></p>
+  <p>Scans the existing project (or template) to determine tech stack, POM folder structure, test file patterns, UI libraries in use, and base class conventions.</p>
+  <p><strong>Output:</strong> <code>output/project-fingerprint.json</code></p>
+
+  <h3>Stage 2 — OIDC Authentication</h3>
+  <p><strong>Prompt:</strong> <code>prompts/02-oidc-auth.prompt.md</code></p>
+  <p>Performs the full OIDC / Ping / basic login flow via Playwright MCP. Saves the authenticated browser storage state. All subsequent crawl and generation stages reuse this state without re-authenticating.</p>
+  <p><strong>Output:</strong> <code>output/auth/storageState.json</code></p>
+  <div class="card info">
+    <strong>Supported auth types:</strong> OIDC Ping PKCE, OIDC Ping (implicit), OIDC Standard, HTTP Basic, None.
+  </div>
+
+  <h3>Stage 3 — DOM Crawl &amp; Application Discovery</h3>
+  <p><strong>Prompt:</strong> <code>prompts/03-dom-crawl.prompt.md</code></p>
+  <p>The core discovery stage. Crawls all application routes, captures full DOM structure per page (forms, buttons, tables, modals, validation containers, hidden/conditional fields), and probes conditional logic.</p>
+
+  <h4>Memory-Safety Rules (REQUIRED)</h4>
+  <ul>
+    <li>After capturing each page, immediately write it to <code>output/application-map.json</code> and update <code>pipeline-state.json</code>.</li>
+    <li>Release per-page DOM data before advancing to the next route. Only the route queue + counters persist across iterations.</li>
+    <li>Never accumulate full DOM snapshots for all pages in memory.</li>
+    <li>If crawl stalls mid-run, the next invocation resumes from <code>stage3.lastCompletedRoute</code>.</li>
+  </ul>
+
+  <h4>Locator-Learning Bias</h4>
+  <p>If <code>learning/INDEX.json</code> exists, Stage 3 merges all indexed learning files (up to <code>learning.maxFiles</code>) using a memory-safe, one-file-at-a-time loop with time-decay weighting. See <a href="#learning-system">Section 7</a> for full details.</p>
+
+  <p><strong>Output:</strong> <code>output/application-map.json</code> (built incrementally, page by page)</p>
+
+  <h3>Stage 4 — Test Strategy</h3>
+  <p><strong>Prompt:</strong> <code>prompts/04-test-strategy.prompt.md</code></p>
+  <p>Reads the application map and plans concrete test cases across smoke, regression, and e2e types. Maps each test case to the forms, buttons, and user journeys discovered in Stage 3.</p>
+  <p><strong>Output:</strong> <code>output/test-plan.json</code></p>
+
+  <h3>Stage 5 — Data Factory</h3>
+  <p><strong>Prompt:</strong> <code>prompts/05-data-factory.prompt.md</code></p>
+  <p>Generates test data builder classes (factories) for every form identified in Stage 3. Respects field types, validation rules, required flags, and the project's framework conventions.</p>
+  <p><strong>Output:</strong> Data factory files written directly to <code>project.existingProjectPath</code> (or <code>newProjectPath</code>).</p>
+
+  <h3>Stage 6 — POM Generator</h3>
+  <p><strong>Prompt:</strong> <code>prompts/06-pom-generator.prompt.md</code></p>
+  <p>Generates Page Object Model classes for every page in the application map. Uses <code>candidateLocators[]</code> (populated by the locator-learning bias in Stage 3) to emit the most reliable locator first, with fallback chains in comments.</p>
+  <p>For Kendo UI and Angular Material controls, emits the correct interaction strategy (e.g., click-wrapper-then-list-item for Kendo dropdowns).</p>
+  <p><strong>Output:</strong> POM files in <code>src/pages/</code> (or framework-equivalent).</p>
+
+  <h3>Stage 7 — Test Generator</h3>
+  <p><strong>Prompt:</strong> <code>prompts/07-test-generator.prompt.md</code></p>
+  <p>Generates spec files from the test plan. Each test case becomes a <code>test()</code> / <code>it()</code> block with proper <code>beforeEach</code>, page navigation, form interaction via POM methods, assertion patterns, and teardown.</p>
+  <p><strong>Output:</strong> Spec files in <code>src/tests/</code> (or framework-equivalent).</p>
+
+  <h3>Stage 8 — Gap Analyzer</h3>
+  <p><strong>Prompt:</strong> <code>prompts/08-gap-analyzer.prompt.md</code></p>
+  <p>Compares the generated specs against the application map to identify coverage gaps: uncovered forms, untested conditional branches, missing error-state tests, etc. Emits a prioritized report.</p>
+  <p><strong>Output:</strong> <code>output/coverage-gap-report.json</code> (kept after pipeline cleanup).</p>
+</section>
+
+<hr class="divider" />
+
+<!-- ═══════════════════════ SECTION 6 — LOCATOR MINER ═══════════════════════ -->
+<section id="locator-miner">
+  <h2>6. POM Locator Miner (Utility)</h2>
+  <p><strong>Prompt:</strong> <code>prompts/utility-pom-locator-miner.prompt.md</code></p>
+  <p>A standalone utility (not part of the 8-stage pipeline) that scans your existing POM files and records every locator strategy in use. The output feeds Stage 3's locator-learning bias.</p>
+
+  <h3>When to Run</h3>
+  <table>
+    <thead><tr><th>Situation</th><th>Run?</th></tr></thead>
+    <tbody>
+      <tr><td>Onboarding an existing project to AutoTestGen</td><td><strong>Yes</strong></td></tr>
+      <tr><td>Major POM refactor (new conventions)</td><td><strong>Yes</strong></td></tr>
+      <tr><td>New UI library introduced (Kendo / Material)</td><td><strong>Yes</strong></td></tr>
+      <tr><td>Periodic refresh (e.g. monthly)</td><td>Recommended</td></tr>
+      <tr><td>Pure greenfield project (no POMs yet)</td><td>No</td></tr>
+    </tbody>
+  </table>
+
+  <h3>How to Run</h3>
+  <ol class="step-list">
+    <li>Ensure <code>pipeline.config.json</code> has <code>project.existingProjectPath</code> set (or pass an absolute path inline).</li>
+    <li>In Copilot Chat, type: <code>/utility-pom-locator-miner</code></li>
+    <li>The agent scans POM files, aggregates locator strategies, and writes a timestamped JSON to <code>learning/</code>.</li>
+    <li>After writing, the agent prunes <code>learning/INDEX.json</code> to at most <code>learning.maxFiles</code> entries (default 6).</li>
+  </ol>
+
+  <h3>Output</h3>
+  <ul>
+    <li><code>learning/locator-learning-&lt;ISO-timestamp&gt;.json</code> — full scan result (one per run)</li>
+    <li><code>learning/INDEX.json</code> — newest-first index of all scans (pruned to <code>maxFiles</code>)</li>
+  </ul>
+
+  <h3>What It Extracts</h3>
+  <table>
+    <thead><tr><th>Section</th><th>Content</th></tr></thead>
+    <tbody>
+      <tr><td><code>locatorStrategies</code></td><td>Overall % use of each strategy (data-testid, role, id, css, xpath, …)</td></tr>
+      <tr><td><code>byControlType</code></td><td>Preferred strategies per control type (button, input, dropdown, …)</td></tr>
+      <tr><td><code>byUiLibrary</code></td><td>Preferred strategies per UI library (native, kendo, material)</td></tr>
+      <tr><td><code>interactionPatterns</code></td><td>Common helper method names to preserve in Stage 6</td></tr>
+      <tr><td><code>fallbackChains</code></td><td>Multi-locator fallback chains already in use by the team</td></tr>
+      <tr><td><code>recommendations</code></td><td>Actionable suggestions (high / medium / low severity)</td></tr>
+      <tr><td><code>rawLocators</code></td><td>Per-locator records (capped at <code>rawLocatorsMax</code>, default 1000)</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<hr class="divider" />
+
+<!-- ═══════════════════════ SECTION 7 — LEARNING SYSTEM ═══════════════════════ -->
+<section id="learning-system">
+  <h2>7. Locator Learning System</h2>
+  <p>
+    The locator learning system is the mechanism that makes AutoTestGen smarter with each miner run.
+    Instead of only using the most recent scan (which could miss patterns established earlier),
+    Stage 3 now merges <em>all</em> indexed scan files into a single compact
+    <strong>merged-bias</strong> object using a memory-safe, one-file-at-a-time loop.
+  </p>
+
+  <h3>Multi-File Merge Algorithm</h3>
+  <ol class="step-list">
+    <li>Read <code>learning/INDEX.json</code> (lightweight). Collect all scan entries, newest first. Cap at <code>learning.maxFiles</code> (default 6).</li>
+    <li>For each file (one at a time, newest first): read the file → validate required keys → extract only aggregate sections (<code>locatorStrategies</code>, <code>byControlType</code>, <code>byUiLibrary</code>, <code>interactionPatterns</code>, <code>fallbackChains</code>). Skip <code>rawLocators</code> to avoid memory pressure.</li>
+    <li>Assign a time-decay weight: newest = 1.0, next = 0.8, then 0.64, 0.512… This ensures recent conventions dominate while older runs still contribute signal.</li>
+    <li>Merge the file's weighted data into the running <code>mergedBias</code> object (weighted counts, strategy votes).</li>
+    <li>Release the file from memory immediately. Only <code>mergedBias</code> persists.</li>
+    <li>Apply <code>mergedBias</code> to DOM capture — every field gets a <code>candidateLocators[]</code> ordered by the merged preferred strategies.</li>
+  </ol>
+
+  <h3>Merging Rules</h3>
+  <table>
+    <thead><tr><th>Section</th><th>Merge Method</th></tr></thead>
+    <tbody>
+      <tr><td><code>locatorStrategies</code></td><td>Accumulate <code>weightedCount += count × weight</code>. Recompute percentages at end. Top strategy by weighted count = <code>topStrategy</code>.</td></tr>
+      <tr><td><code>byControlType</code></td><td>Weighted vote per strategy per control type (array index 0 = highest vote). Top 3 by vote score become merged <code>preferredStrategies</code>.</td></tr>
+      <tr><td><code>byUiLibrary</code></td><td>Same voting as <code>byControlType</code>.</td></tr>
+      <tr><td><code>interactionPatterns</code></td><td>Union of all patterns; sum occurrences (weighted). Cap at 20.</td></tr>
+      <tr><td><code>fallbackChains</code></td><td>Union of unique chains (dedup by fieldName). Cap at 50.</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Memory Safety Guarantees</h3>
+  <div class="card success">
+    <ul>
+      <li>Only one learning file is open at any time — no bulk loading.</li>
+      <li><code>rawLocators</code> (the largest section) is never loaded from any file.</li>
+      <li>The in-memory <code>mergedBias</code> object contains no raw locator strings or sample arrays — only aggregate statistics.</li>
+      <li>If a file fails validation, it is skipped with a warning — the crawl never fails due to a bad learning file.</li>
+    </ul>
+  </div>
+
+  <h3>INDEX Pruning</h3>
+  <p>
+    After each miner run, the miner prunes <code>learning/INDEX.json</code> to at most
+    <code>learning.maxFiles</code> entries. Pruned entries are removed from the index
+    (so Stage 3 doesn't process them) but their files remain on disk for manual archiving.
+  </p>
+  <pre><code># Archive files no longer in the index
+ls -1t learning/locator-learning-*.json | tail -n +7 | \
+  xargs -I {} mv {} learning/archive/</code></pre>
+
+  <h3>candidateLocators on Each Field</h3>
+  <p>Stage 3 records the merged strategy ordering on every captured field:</p>
+  <pre><code>"candidateLocators": [
+  { "strategy": "data-testid", "selector": "[data-testid='submit-btn']", "source": "learning-bias" },
+  { "strategy": "role",        "selector": "role=button[name='Submit']",  "source": "learning-bias" },
+  { "strategy": "css",         "selector": "button.submit",               "source": "framework-fallback" }
+]</code></pre>
+  <p>Stage 6 uses the first candidate. If it breaks in CI, Stage 6 can rotate to the next without re-crawling.</p>
+</section>
+
+<hr class="divider" />
+
+<!-- ═══════════════════════ SECTION 8 — PIPELINE MODES ═══════════════════════ -->
+<section id="pipeline-modes">
+  <h2>8. Pipeline Modes</h2>
+
+  <table>
+    <thead><tr><th>Mode</th><th>Config</th><th>Use Case</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><strong>full</strong></td>
+        <td><code>pipeline.mode: "full"</code></td>
+        <td>First-time generation or full refresh across the entire application.</td>
+      </tr>
+      <tr>
+        <td><strong>single-route</strong></td>
+        <td><code>pipeline.mode: "single-route"</code><br/><code>pipeline.singleRoute: "/path"</code></td>
+        <td>Generate or refresh artifacts for one new/changed route. Merges into the existing project — does not regenerate unchanged pages.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>Single-Route Mode Details</h3>
+  <p>When <code>mode: "single-route"</code>:</p>
+  <ul>
+    <li>Stage 3 skips the Route Discovery Pass entirely — crawls only the specified URL.</li>
+    <li>Stage 3 merges the new page into the existing <code>application-map.json</code>.</li>
+    <li>Stages 4–7 scope their work to forms/elements on that page and its direct modals/journeys.</li>
+    <li>Stage 8 scopes gap analysis to the single route's deltas.</li>
+    <li><code>pipeline-state.json</code> uses <code>stage3.singleRouteCompleted</code> instead of the global <code>stage3.status: "completed"</code>.</li>
+  </ul>
+</section>
+
+<hr class="divider" />
+
+<!-- ═══════════════════════ SECTION 9 — RESUME ═══════════════════════ -->
+<section id="resume">
+  <h2>9. Resume &amp; Checkpointing</h2>
+  <p>Every stage writes its status to <code>output/pipeline-state.json</code>. If a run stalls (e.g., browser timeout, network error), re-invoking the master orchestrator automatically resumes from the last completed stage.</p>
+
+  <h3>pipeline-state.json Key Fields</h3>
+  <table>
+    <thead><tr><th>Field</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>stages.stage&lt;N&gt;.status</code></td><td><code>"pending"</code> | <code>"in_progress"</code> | <code>"completed"</code> | <code>"failed"</code></td></tr>
+      <tr><td><code>stage3.lastCompletedRoute</code></td><td>Last route fully written to application-map.json</td></tr>
+      <tr><td><code>stage3.routesCompleted</code></td><td>Count of routes already captured</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Stage 3 Resume Procedure</h3>
+  <ol class="step-list">
+    <li>Check <code>output/pipeline-state.json</code> for <code>stage3.status</code>.</li>
+    <li>If <code>"in_progress"</code>: load <code>routesCompleted</code> and rebuild <code>visitedRoutes</code> from the existing application-map.json. Drop those routes from <code>crawlQueue</code>.</li>
+    <li>If a route has a partial entry (pageId exists but required fields missing), treat it as pending and re-capture.</li>
+    <li>Log a RESUME banner: <code>[RESUME] Resuming from route N of M</code>.</li>
+  </ol>
+
+  <div class="card warning">
+    <strong>Do not manually edit</strong> <code>output/pipeline-state.json</code>. Doing so may cause the resume logic to skip or re-process stages incorrectly.
+  </div>
+</section>
+
+<hr class="divider" />
+
+<!-- ═══════════════════════ SECTION 10 — OUTPUTS ═══════════════════════ -->
+<section id="outputs">
+  <h2>10. Output Artifacts</h2>
+
+  <table>
+    <thead><tr><th>Artifact</th><th>Location</th><th>Kept After Cleanup?</th></tr></thead>
+    <tbody>
+      <tr><td>Auth storage state</td><td><code>output/auth/storageState.json</code></td><td>No (deleted)</td></tr>
+      <tr><td>Application map</td><td><code>output/application-map.json</code></td><td>No (deleted)</td></tr>
+      <tr><td>Test plan</td><td><code>output/test-plan.json</code></td><td>No (deleted)</td></tr>
+      <tr><td>Pipeline state</td><td><code>output/pipeline-state.json</code></td><td>No (deleted)</td></tr>
+      <tr><td>Coverage gap report</td><td><code>output/coverage-gap-report.json</code></td><td><strong>Yes</strong></td></tr>
+      <tr><td>Merge report</td><td><code>output/merge-report.json</code></td><td><strong>Yes</strong></td></tr>
+      <tr><td>Generated POMs</td><td><code>&lt;projectPath&gt;/src/pages/</code></td><td>N/A (in project)</td></tr>
+      <tr><td>Generated specs</td><td><code>&lt;projectPath&gt;/src/tests/</code></td><td>N/A (in project)</td></tr>
+      <tr><td>Data factories</td><td><code>&lt;projectPath&gt;/src/factories/</code></td><td>N/A (in project)</td></tr>
+      <tr><td>Learning scans</td><td><code>learning/locator-learning-*.json</code></td><td>Yes (manual retention)</td></tr>
+      <tr><td>Learning index</td><td><code>learning/INDEX.json</code></td><td>Yes (manual retention)</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<hr class="divider" />
+
+<!-- ═══════════════════════ SECTION 11 — TROUBLESHOOTING ═══════════════════════ -->
+<section id="troubleshooting">
+  <h2>11. Troubleshooting</h2>
+
+  <table>
+    <thead><tr><th>Symptom</th><th>Likely Cause</th><th>Fix</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>Stage 3 stalls / times out mid-crawl</td>
+        <td>Large application — DOM accumulation in memory</td>
+        <td>Re-run the orchestrator. Stage 3 resumes from the last completed route automatically.</td>
+      </tr>
+      <tr>
+        <td>"Playwright MCP server is not running"</td>
+        <td>MCP server not started</td>
+        <td>Run <code>npx @playwright/mcp@latest</code> in a terminal, or set <code>mcp.autoStart: true</code>.</td>
+      </tr>
+      <tr>
+        <td>Stage 2 fails — login page not found</td>
+        <td>Wrong <code>AUTH_LOGIN_PAGE_TITLE</code> or selector</td>
+        <td>Update <code>AUTH_USERNAME_SELECTOR</code>, <code>AUTH_PASSWORD_SELECTOR</code>, <code>AUTH_SUBMIT_SELECTOR</code> in <code>.env</code>.</td>
+      </tr>
+      <tr>
+        <td>"No POMs found" in locator miner</td>
+        <td>POMs not in standard folders</td>
+        <td>Set <code>projectFingerprint.folders.pages</code> or pass the path inline at invocation.</td>
+      </tr>
+      <tr>
+        <td>Stage 3 not using learning files</td>
+        <td><code>learning/INDEX.json</code> missing or file not listed</td>
+        <td>Re-run the miner. Check that the file passes basic schema validation.</td>
+      </tr>
+      <tr>
+        <td>byControlType is empty in learning file</td>
+        <td>Field-name heuristics didn't match POM names</td>
+        <td>Rename fields to follow <code>*Button</code>, <code>*Input</code>, <code>*Dropdown</code> conventions.</td>
+      </tr>
+      <tr>
+        <td>Kendo dropdown selection does nothing</td>
+        <td>Wrong interaction strategy — using <code>selectOption()</code> on wrapper</td>
+        <td>Stage 3's 3h must capture <code>kendo-dropdownlist</code> and emit <code>interactionStrategy: "kendo-dropdown-click-list-item"</code>. Re-run Stage 3 after miner if needed.</td>
+      </tr>
+      <tr>
+        <td><code>pipeline-state.json</code> shows wrong status</td>
+        <td>Manual edit or interrupted write</td>
+        <td>Delete <code>output/pipeline-state.json</code> and re-run from Stage 0. (Only do this if resume is not possible.)</td>
+      </tr>
+    </tbody>
+  </table>
+</section>
+
+<hr class="divider" />
+
+<!-- ═══════════════════════ SECTION 12 — DO/DON'T ═══════════════════════ -->
+<section id="dos-donts">
+  <h2>12. Do's &amp; Don'ts</h2>
+
+  <table>
+    <thead><tr><th>Do</th><th>Don't</th></tr></thead>
+    <tbody>
+      <tr><td>Run the locator miner before every full pipeline run.</td><td>Skip the miner on a project with existing POMs — you'll lose bias signal.</td></tr>
+      <tr><td>Use single-route mode for incremental updates.</td><td>Re-run the full pipeline for a single new page — it's unnecessary.</td></tr>
+      <tr><td>Keep last 6 scan files in INDEX (default <code>maxFiles</code>).</td><td>Let the index grow unbounded — it increases Stage 3 merge time.</td></tr>
+      <tr><td>Review <code>recommendations</code> from the miner in sprint planning.</td><td>Treat miner recommendations as automatic tickets — they need human judgment.</td></tr>
+      <tr><td>Archive old learning files instead of deleting them.</td><td>Hand-edit generated learning JSON files — the schema will break.</td></tr>
+      <tr><td>Set <code>crawl.excludeRoutes</code> for logout, error, and admin routes.</td><td>Crawl <code>/logout</code> — it will destroy the auth session mid-crawl.</td></tr>
+      <tr><td>Use <code>generation.mergeStrategy: "append-only"</code> on existing projects.</td><td>Use <code>"overwrite"</code> on an existing project — you'll lose custom locator tweaks.</td></tr>
+      <tr><td>Store secrets in <code>.env</code> only.</td><td>Put secrets in <code>pipeline.config.json</code> directly.</td></tr>
+    </tbody>
+  </table>
+
+  <div style="margin-top:48px; text-align:center; font-size:12px; color:#888;">
+    AutoTestGen Rulebook v1.0 &nbsp;·&nbsp; May 2026 &nbsp;·&nbsp; Internal Use Only
+  </div>
+</section>
+
+</div><!-- /container -->
+</body>
+</html>

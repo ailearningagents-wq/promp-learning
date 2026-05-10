@@ -1,170 +1,94 @@
 ---
 mode: agent
 description: >
-  STAGE 0 — Input Collection & Config Finalization.
-  Validates config.json, resolves environment variables, determines project mode,
-  and prepares the output directory structure for the pipeline.
+  STAGE 0 — Input Collection & Output Bootstrap.
+  Trusts the master orchestrator's resolved config + .env (in memory).
+  This stage only initializes the output directory and seeds pipeline-state.json.
 tools:
   - read_file
   - create_file
   - list_dir
-  - run_in_terminal
 ---
 
-# Stage 0 — Input Collection & Config Finalization
+# Stage 0 — Input Collection & Output Bootstrap
 
 ## Objective
-Validate all inputs, resolve environment variable references, determine project mode,
-and set up the output directory. This stage ensures the pipeline has everything it
-needs before any browser interaction or code generation begins.
+The master orchestrator has already:
+
+- Located `pipeline.config.json` and resolved `.env` values **in memory only**.
+- Validated required tokens, project mode, and project paths.
+- Started the local Playwright MCP server (or confirmed it's running).
+
+Stage 0's job is the small remainder: bootstrap the `output/` directory
+and seed `pipeline-state.json` so downstream stages can checkpoint.
+
+## Inputs (passed in-memory by the orchestrator)
+- Resolved config (read-only view of `pipeline.config.json` with `.env` substituted)
+- Project mode (`existing` | `new`) and the resolved project path
+- Pipeline mode (`full` | `single-route`) and `singleRoute` if applicable
 
 ---
 
-## Step 1 — Read Configuration
+## Step 1 — Create Output Directory Structure
 
-Read `config.json` from the workspace root. Parse it and extract all values.
-Store the parsed config internally — you will reference it throughout this stage.
+This stage's tools list does not include `run_in_terminal`. To create
+directories, use `create_file` to drop a `.keep` placeholder inside each —
+the parent directories are created implicitly by the file write.
 
----
+Create:
 
-## Step 2 — Resolve Environment Variables
+| File (via `create_file`)            | Effect (created directory) |
+|-------------------------------------|----------------------------|
+| `output/.keep`                      | `output/`                  |
+| `output/logs/.keep`                 | `output/logs/`             |
 
-For every field in `config.json` that starts with `$` (e.g., `$APP_USERNAME`):
+`output/auth/` is created on demand by Stage 2 when it writes
+`storageState.json` — Stage 0 does not need to pre-create it.
 
-1. Run `echo $VARIABLE_NAME` in the terminal to check if it is set
-2. Build a resolved config map where `$VAR_NAME` is replaced with `[SET]` (never log actual values)
-3. If any required environment variable is NOT set, collect all missing ones and report:
-
+`.keep` files contain a single line:
 ```
-The following environment variables are required but not set:
-  - $APP_USERNAME  → Set with: export APP_USERNAME="your-username"
-  - $APP_PASSWORD  → Set with: export APP_PASSWORD="your-password"
-
-Please set these variables and run the pipeline again.
-```
-
-Required variables are: `auth.username`, `auth.password`, `auth.clientId`
-
-For `auth.type = "oidc-ping-pkce"` (PKCE/SPA flows):
-- `auth.clientSecret` is NOT required and should be `null` — do NOT flag its absence as an error
-- Confirm `auth.pkce.enabled` is `true` and `auth.pkce.redirectUri` is set
-
-For `auth.type = "oidc-ping"` or `"oidc-standard"` (confidential client flows):
-- `auth.clientSecret` IS required — flag if missing or null
-
----
-
-## Step 3 — Validate Application URL
-
-1. Run `curl -s -o /dev/null -w "%{http_code}" [config.application.baseUrl]` to verify the app is reachable
-2. If the HTTP status code is NOT 200, 301, or 302 → warn the user but do NOT stop the pipeline
-   (The app may require authentication to even respond with 200)
-3. Log: `Application URL [baseUrl] is reachable — HTTP [status_code]`
-
----
-
-## Step 4 — Determine Project Mode
-
-Read `config.project.mode`:
-
-### If mode = "existing":
-1. Check that `config.project.existingProjectPath` directory exists
-2. List the top-level contents of that directory
-3. Confirm it looks like a test project (has `package.json` OR `pom.xml` OR `build.gradle` OR `*.csproj` OR `*.sln`)
-4. If the directory does not exist → STOP with:
-   ```
-   Error: Existing project path does not exist: [path]
-   Please update config.json with the correct path.
-   ```
-5. Log: `Existing project found at: [path]`
-
-### If mode = "new":
-1. Check that `config.project.newProjectPath` does NOT already exist OR is empty
-2. If it exists and has files → ask:
-   ```
-   The target directory [path] already exists and contains files.
-   Do you want to:
-   A) Use it anyway (files will not be overwritten)
-   B) Choose a different path
-   
-   Reply A or B.
-   ```
-3. Log: `New project will be created at: [path]`
-
----
-
-## Step 5 — Create Output Directory Structure
-
-Create the following directories if they do not already exist:
-
-```
-[workspace]/output/
-[workspace]/output/auth/
-[workspace]/output/logs/
+This file is intentional — it ensures the directory is tracked. Safe to ignore.
 ```
 
-Create `output/pipeline-state.json` to track pipeline progress:
+Never write secrets, resolved config values, or `.env` content into any
+file under `output/`.
 
-```json
-{
-  "startedAt": "[ISO timestamp]",
-  "config": {
-    "appName": "[config.application.name]",
-    "baseUrl": "[config.application.baseUrl]",
-    "mode": "[config.project.mode]",
-    "techStack": "[resolved tech stack]"
-  },
-  "stages": {
-    "stage0": "completed",
-    "stage1": "pending",
-    "stage2": "pending",
-    "stage3": "pending",
-    "stage4": "pending",
-    "stage5": "pending",
-    "stage6": "pending",
-    "stage7": "pending",
-    "stage8": "pending"
-  },
-  "counters": {
-    "pagesDiscovered": 0,
-    "formsDiscovered": 0,
-    "testCasesGenerated": 0,
-    "filesCreated": 0,
-    "filesExtended": 0,
-    "filesSkipped": 0
-  }
-}
-```
+## Step 2 — Seed `pipeline-state.json`
 
----
+If `output/pipeline-state.json` already exists, **do not overwrite it** —
+the orchestrator's resume logic depends on it. Update only `pipeline.lastUpdated`
+and confirm `stage0.status` is `"completed"`.
 
-## Step 6 — Resolve Tech Stack
+If it does not exist, write the schema defined in the master orchestrator
+(see "Resume / Checkpointing"), with these initial values:
 
-Determine the final tech stack that will be used:
+- `pipeline.mode` = the resolved pipeline mode
+- `pipeline.singleRoute` = the resolved single-route value (or `null`)
+- `stages.stage0.status` = `"completed"`
+- All other stage statuses = `"pending"`
+- All counters = `0`
 
-- If mode = `"existing"` → tech stack will be determined in Stage 1 (fingerprinting)
-- If mode = `"new"` → use `config.project.newProjectTechStack`:
-  - `"playwright-typescript"` → Playwright with TypeScript
-  - `"playwright-javascript"` → Playwright with JavaScript
+## Step 3 — Resolve Tech Stack Hint
 
-Log the resolved tech stack to `output/logs/stage0.log`.
+- Existing project → tech stack is determined in Stage 1 (fingerprinting).
+- New project → use `project.newProjectTechStack` from the resolved config.
 
----
+Log the resolved hint to `output/logs/stage0.log`.
 
-## Step 7 — Stage 0 Completion
+## Step 4 — Stage 0 Completion Log
 
-Update `output/pipeline-state.json` — set `stages.stage0` to `"completed"`.
-
-Log summary:
 ```
 === STAGE 0 COMPLETE ===
-App Name:     [config.application.name]
-Base URL:     [config.application.baseUrl]
-Environment:  [config.application.environment]
-Mode:         [config.project.mode]
-Auth Type:    [config.auth.type]
-Tech Stack:   [resolved tech stack]
-Output Dir:   [workspace]/output/
-All required environment variables: SET
+App:           [application.name]
+Base URL:      [application.baseUrl]
+Project Mode:  [existing | new]
+Pipeline Mode: [full | single-route]
+Project Path:  [resolved project path]
+Tech Stack:    [resolved or "deferred to Stage 1"]
+MCP Server:    [running]
 Stage 0: PASSED — Proceeding to Stage 1
 ```
+
+> Stage 0 must NOT print the resolved values of any `.env`-backed field
+> (usernames, passwords, client secrets). Print only structural / non-secret
+> values.

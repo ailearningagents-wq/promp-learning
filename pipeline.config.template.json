@@ -1,0 +1,123 @@
+{
+  "_instructions": [
+    "1. Copy this file to 'pipeline.config.json' (next to it, same folder).",
+    "2. Copy '.env.template' to '.env' and fill in every required value.",
+    "3. Every '$VAR_NAME' below resolves from .env at orchestrator pre-flight (in memory only — secrets are never written back to this file).",
+    "4. Remove this _instructions key from your filled pipeline.config.json before running.",
+    "5. The orchestrator file is at orchestrator/master-orchestrator.prompt.md. Run it to start the pipeline."
+  ],
+
+  "pipeline": {
+    "mode": "full",
+    "_mode_options": ["full", "single-route"],
+    "_mode_note": "full = crawl + generate for the whole app; single-route = produce/refresh artifacts for one route only.",
+    "singleRoute": null,
+    "_singleRoute_note": "Required only when mode is 'single-route'. Same-domain path, e.g. '/requests/create'.",
+    "envFile": ".env",
+    "_envFile_note": "Path (relative to workspace root) to the env file the orchestrator loads in memory at pre-flight."
+  },
+
+  "mcp": {
+    "configFile": "mcp-config/mcp.json",
+    "_configFile_note": "Local Playwright MCP config. The orchestrator will detect and start the MCP server from this config if it is not already running.",
+    "autoStart": true,
+    "_autoStart_note": "If true, orchestrator launches `npx @playwright/mcp@latest` (per mcp-config/mcp.json) when the server is unreachable."
+  },
+
+  "project": {
+    "mode": "$PROJECT_MODE",
+    "_mode_options": ["existing", "new"],
+    "_mode_note": "Set PROJECT_MODE in .env to 'existing' or 'new'.",
+    "existingProjectPath": "$EXISTING_PROJECT_PATH",
+    "_existingProjectPath_note": "Required when project.mode='existing'. Absolute path to your test project root. All generated artifacts merge directly into this path — nothing is staged in output/.",
+    "newProjectPath": "$NEW_PROJECT_PATH",
+    "_newProjectPath_note": "Used as the default when project.mode='new'. The orchestrator will confirm this path with you (or ask interactively if it's empty/invalid) before creating files.",
+    "newProjectTechStack": "$NEW_PROJECT_TECH_STACK",
+    "_newProjectTechStack_options": [
+      "playwright-typescript",
+      "playwright-javascript",
+      "selenium-java",
+      "selenium-dotnet",
+      "selenium-js",
+      "webdriverio"
+    ]
+  },
+
+  "application": {
+    "name": "$APP_NAME",
+    "baseUrl": "$APP_BASE_URL",
+    "environment": "$APP_ENVIRONMENT",
+    "_environment_options": ["dev", "uat", "staging", "prod"]
+  },
+
+  "auth": {
+    "type": "$AUTH_TYPE",
+    "_type_options": ["oidc-ping-pkce", "oidc-ping", "oidc-standard", "basic", "none"],
+    "oidcIssuerUrl": "$OIDC_ISSUER_URL",
+    "clientId": "$OIDC_CLIENT_ID",
+    "clientSecret": "$OIDC_CLIENT_SECRET",
+    "_clientSecret_note": "Leave OIDC_CLIENT_SECRET empty in .env for PKCE flows. Required for confidential clients.",
+    "pkce": {
+      "enabled": "$OIDC_PKCE_ENABLED",
+      "codeChallengeMethod": "S256",
+      "redirectUri": "$OIDC_REDIRECT_URI"
+    },
+    "scopes": "$OIDC_SCOPES",
+    "username": "$APP_USERNAME",
+    "password": "$APP_PASSWORD",
+    "loginPageTitle": "$AUTH_LOGIN_PAGE_TITLE",
+    "usernameSelector": "$AUTH_USERNAME_SELECTOR",
+    "passwordSelector": "$AUTH_PASSWORD_SELECTOR",
+    "submitSelector": "$AUTH_SUBMIT_SELECTOR",
+    "postLoginUrlPattern": "$AUTH_POST_LOGIN_URL_PATTERN"
+  },
+
+  "crawl": {
+    "maxDepth": 3,
+    "maxRoutes": 100,
+    "_maxRoutes_note": "Hard cap on routes Stage 3 will visit per run. New routes discovered beyond this cap are deferred (logged) but not crawled. Increase if your app has > 100 unique pages and you want full coverage in one run.",
+    "maxOptionsPerField": 20,
+    "_maxOptionsPerField_note": "Cap on conditional probing per dropdown / radio field. Fields with more options than this are sampled (first, last, uniform subset). The full option list is still captured in field.options.",
+    "excludeRoutes": ["/logout", "/error", "/404"],
+    "includeRoutes": [],
+    "_includeRoutes_note": "If populated, ONLY these routes are crawled. Independent from pipeline.singleRoute.",
+    "interactionProbing": true,
+    "waitForSelector": "main, #app-root, .main-content"
+  },
+
+  "learning": {
+    "maxFiles": 6,
+    "_maxFiles_note": "Most-recent N locator-learning JSON files Stage 3 reads from learning/ when biasing locator capture. Older scans are ignored (not deleted). 6 ≈ 6 monthly miner runs.",
+    "maxFileBytes": 5000000,
+    "_maxFileBytes_note": "Skip any individual learning file larger than this many bytes (5 MB default).",
+    "maxAgeDays": 180,
+    "_maxAgeDays_note": "Skip learning files older than this many days. Default 180 (6 months).",
+    "decayBase": 0.7,
+    "_decayBase_note": "Time-decay weight base for the multi-file merge. weight(i) = decayBase^i, where i=0 is the newest. 0.7 means file 1 contributes 70%, file 2 contributes 49%, etc."
+  },
+
+  "generation": {
+    "testTypes": ["smoke", "regression", "e2e"],
+    "generatePOMs": true,
+    "generateDataFactories": true,
+    "generateAuthFixture": true,
+    "generateUnreferencedPoms": false,
+    "_generateUnreferencedPoms_note": "If false, Stage 6 only generates POMs whose pageClass is referenced by at least one test case (recommended).",
+    "mergeStrategy": "append-only",
+    "_mergeStrategy_options": ["append-only", "overwrite"]
+  },
+
+  "_outputBehavior_note": [
+    "All intermediate state lives under output/ during the run.",
+    "After Stage 8 completes and the four-artifact contract passes, the orchestrator deletes output/auth, output/crawl, output/logs, output/application-map.json, output/test-plan.json, and output/pipeline-state.json.",
+    "Only output/coverage-gap-report.json and output/merge-report.json (existing projects) are kept.",
+    "All generated test code lives in your project path — never staged in output/."
+  ],
+
+  "learning": {
+    "maxFiles": 6,
+    "_maxFiles_note": "Maximum number of locator-learning scan files kept in INDEX.json. Older entries are pruned from the index (not deleted from disk) by the miner. Stage 3 merges up to this many files; higher values improve locator signal but increase merge time.",
+    "rawLocatorsMax": 1000,
+    "_rawLocatorsMax_note": "Cap on rawLocators[] entries written per scan file. If the project has more locators, the miner samples uniformly and sets samplingApplied:true."
+  }
+}
